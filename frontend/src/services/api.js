@@ -108,6 +108,7 @@ export const deleteRecurringExpense = async (recurringId) => {
     await api.delete(`/recurring/${recurringId}`);
 };
 
+
 // Chat Sessions
 export const getChatSessions = async (section = 'rag') => {
     try {

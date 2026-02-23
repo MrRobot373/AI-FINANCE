@@ -12,6 +12,7 @@ A modern, minimalist personal finance application featuring a real-time AI assis
 - **Intelligent Categorization**: Automatically detects categories (e.g., "Uber" -> Transport) or asks for clarification if unsure.
 - **Localized**: Fully optimized for Indian context (₹ currency, understands "Chai", "Ola", etc.).
 - **Context Aware**: Knows your recent transactions and goals to provide personalized advice.
+- **Lip Sync Avatar**: 3D Avatar that speaks the AI's response in real-time with accurate lip synchronization.
 
 ### 2. Dashboard & Analytics
 - **Overview**: Real-time summary of Total Balance, Income, and Expenses.
@@ -32,6 +33,10 @@ Before you begin, ensure you have the following installed:
 2.  **Python** (v3.10 or higher)
 3.  **Ollama** (for local AI model)
 4.  **Git** (for version control)
+5.  **FFmpeg** (Recommended for audio processing)
+    -   *Windows*: `winget install ffmpeg`
+    -   *Mac*: `brew install ffmpeg`
+    -   *Linux*: `sudo apt install ffmpeg`
 
 ---
 
@@ -64,7 +69,7 @@ python -m venv venv
 # Mac/Linux:
 source venv/bin/activate
 
-# Install requirements
+# Install requirements (includes Lip Sync dependencies)
 pip install -r requirements.txt
 
 # Initialize the database
@@ -118,10 +123,24 @@ npm run dev
 
 ---
 
+## 🗣️ Lip Sync & Avatar Features
+
+The application features a real-time Lip Sync avatar driven by the backend.
+-   **TTS Engine**: Uses **edge-tts** (Microsoft Edge Online) for high-quality speech.
+-   **Fallback**: Automatically switches to **gTTS** (Google TTS) if the primary service is unavailable.
+-   **Visemes**: Backend analyzes text to generate phonemes (IPA) and maps them to visual morph targets (Visemes) for the 3D model.
+
+For detailed architecture documentation, see [LIP_SYNC_DOCUMENTATION.md](LIP_SYNC_DOCUMENTATION.md).
+
+---
 
 ## ❓ Troubleshooting
 
-- **Ollama Error**: If the chat says "Model not found", ensure you ran `ollama pull llama3.1:8b` and that Ollama is running in the system tray.
+- **No Sound / Lip Sync**:
+    -   Ensure `FFmpeg` is installed and added to your system PATH.
+    -   Check backend logs for TTS errors.
+    -   Verify `backend/generated_audio` folder exists (it is auto-created).
+- **Ollama Error**: If the chat says "Model not found", ensure you ran `ollama pull gemma2:2b` and that Ollama is running in the system tray.
 - **Database Error**: If you see database errors, delete `finance.db` in the backend folder and run `python init_db.py` again.
 - **CORS Error**: If the frontend cannot talk to the backend, check if the backend URL in `frontend/src/services/api.js` matches `http://localhost:8000`.
 
@@ -131,5 +150,5 @@ npm run dev
 - **Frontend**: Use login name 'admin' to access the training page
 
 ## 💡 Tech Stack
-- **Frontend**: React, Tailwind CSS v4, Zustand, Recharts, Lucide React.
-- **Backend**: FastAPI, SQLAlchemy (SQLite), Ollama.
+- **Frontend**: React, React Three Fiber (R3F), Tailwind CSS v4, Zustand.
+- **Backend**: FastAPI, Edge-TTS, Phonemizer, SQLite.

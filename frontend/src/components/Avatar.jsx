@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
-import { textToVisemes, textToVisemesAPI, audioToVisemesAPI, textToAudioVisemesAPI, getVisemeMorphTargets } from "../utils/visemeUtils";
+// Unused utils removed to prevent confusion
+// import { textToVisemes, textToVisemesAPI, textToAudioVisemesAPI, getVisemeMorphTargets } from "../utils/visemeUtils";
 import { speakText, stopSpeaking } from "../utils/ttsUtils";
+import { useLipSync } from "../hooks/useLipSync";
+import { clampMorphInfluence } from "../utils/morphUtils";
 
-function Avatar({ model, handpos, ischatting, text, audioFile, speakTrigger, onSpeechStart }) {
+function Avatar({ model, handpos, ischatting, text, speakTrigger, onSpeechStart, emotions, ismale }) {
     const { scene } = useGLTF(model);
     const groupRef = useRef();
     const avtargroup = useRef()
@@ -12,10 +15,40 @@ function Avatar({ model, handpos, ischatting, text, audioFile, speakTrigger, onS
     const leftArm = useRef(null);
     const rightForeArm = useRef(null);
     const leftForeArm = useRef(null);
+    const leftHand = useRef(null);
+    const rightHand = useRef(null);
     const head = useRef(null);
     const spine = useRef(null);
     const meshes = useRef([]);
     const time = useRef(0);
+    const leftindex4 = useRef(null);
+    const leftmiddle4 = useRef(null);
+    const leftring4 = useRef(null);
+    const leftpinky4 = useRef(null);
+    const headResetDone = useRef(false);
+    const headTransitionTime = useRef(0);
+    const headStartRot = useRef({ x: 0, y: 0, z: 0 });
+
+    // Arm repositioning refs
+    const armResetDone = useRef(false);
+    const armTransitionTime = useRef(0);
+    const armStartRot = useRef({
+        rightArm: { x: 0, y: 0, z: 0 },
+        leftArm: { x: 0, y: 0, z: 0 },
+        rightForeArm: { x: 0, y: 0, z: 0 },
+        leftForeArm: { x: 0, y: 0, z: 0 }
+    });
+
+
+    const rightindex4 = useRef(null);
+    const rightmiddle4 = useRef(null);
+    const rightring4 = useRef(null);
+    const rightpinky4 = useRef(null);
+
+    // Transition system refs
+    const transitionTime = useRef(0);
+    const isTransitioning = useRef(false);
+    const transitionStartRotations = useRef({ right: {}, left: {} });
 
     // List of Bone Points names can be used for animation
     const bones = [
@@ -189,21 +222,103 @@ function Avatar({ model, handpos, ischatting, text, audioFile, speakTrigger, onS
     const eyelidleft = useRef(null);
 
     // ============================================
-    // VISEME LIP SYNC STATE
+    // VISEME LIP SYNC STATE (NEW SYSTEM)
     // ============================================
-    // visemeSequence: Array of {viseme, start, duration} objects generated from text
-    // isPlayingVisemes: Boolean flag to control when viseme animation is active
-    // visemePlaybackTime: Tracks elapsed time during viseme playback
-    // currentVisemeIndex: Index of the currently playing viseme in the sequence
-    const [visemeSequence, setVisemeSequence] = useState([]);
+    // Hook handles audio playback, timeline, and frame updates
+    const { speak, stop: stopLipSync, isPlaying: isLipSyncing } = useLipSync(headMesh, teethMesh, onSpeechStart);
+
+    // Legacy flags maintained for compatibility with other effects
     const [isPlayingVisemes, setIsPlayingVisemes] = useState(false);
-    const visemePlaybackTime = useRef(0);
-    const currentVisemeIndex = useRef(0);
-    const durationRatio = useRef(1); // Ratio to scale viseme timing to audio duration
+
+    useEffect(() => {
+        setIsPlayingVisemes(isLipSyncing);
+    }, [isLipSyncing]);
 
     const eyeLidBone = useRef(null);
     const blinkTime = useRef(0);
     const nextBlinkTime = useRef(Math.random() * 0 + 2); // First blink in 2-5 seconds
+
+    // Emotion system
+    const leftEye = useRef(null);
+    const rightEye = useRef(null);
+    const thinkingTime = useRef(0);
+    const thinkingPhase = useRef(0); // 0: idle, 1: moving, 2: holding, 3: returning
+
+    // Emotion configurations
+    const emotionConfigs = {
+        happy: {
+            gestureAmplitude: 1.3,
+            gestureSpeed: 1.2,
+            headTilt: 0.05,
+            headNodSpeed: 1.0,
+            smileIntensity: 1
+        },
+        sad: {
+            gestureAmplitude: 0.5,
+            gestureSpeed: 0.6,
+            headTilt: 0.1,
+            headNodSpeed: 0.5,
+            smileIntensity: -2
+        },
+        neutral: {
+            gestureAmplitude: 1.0,
+            gestureSpeed: 1.0,
+            headTilt: 0,
+            headNodSpeed: 0.8,
+            smileIntensity: 0
+        },
+        explain1: {
+            gestureAmplitude: 0.7,
+            gestureSpeed: 0.9,
+            headTilt: 0,
+            headNodSpeed: 0.8,
+            smileIntensity: 0,
+            armFoldAngle: Math.PI / 4, // 45 degrees
+            customHandPath: true // Enable custom path animation
+        },
+        explain2: {
+            gestureAmplitude: 1.5,
+            gestureSpeed: 1.3,
+            headTilt: 0,
+            headNodSpeed: 1.0,
+            smileIntensity: 0,
+            armFoldAngle: Math.PI / 2, // 90 degrees
+            customHandPath: true // Enable custom path animation
+        },
+        listen: {
+            gestureAmplitude: 0.3,
+            gestureSpeed: 0.5,
+            headTilt: 0,
+            headNodSpeed: 2.0, // Faster nodding
+            nodAmplitude: 0.08, // Larger nods
+            smileIntensity: 0
+        },
+        think: {
+            gestureAmplitude: 0.4,
+            gestureSpeed: 0.6,
+            headTilt: 0.1,
+            headNodSpeed: 0.3,
+            smileIntensity: 0,
+            eyeRoll: true
+        }
+    };
+
+    const currentEmotion = emotionConfigs[emotions?.toLowerCase()] || emotionConfigs.neutral;
+    const prevEmotion = useRef(emotions);
+
+    // Trigger transition when emotion changes
+    useEffect(() => {
+        if (prevEmotion.current !== emotions) {
+            // Emotion changed - trigger transition
+            currentEmotion.gestureReset = 1;
+            prevEmotion.current = emotions;
+            // Reset head and arm transition flags for ALL emotion changes
+            headResetDone.current = false;
+            headTransitionTime.current = 0;
+            armResetDone.current = false;
+            armTransitionTime.current = 0;
+        }
+    }, [emotions, currentEmotion]);
 
     useEffect(() => {
         scene.traverse((obj) => {
@@ -224,41 +339,114 @@ function Avatar({ model, handpos, ischatting, text, audioFile, speakTrigger, onS
                 }
             }
             // Capture the specific bone for eyelids
-            if (obj.isBone && obj.name === "Bone") {
+            if (obj.isBone && obj.name === "EyeLids") {
                 eyeLidBone.current = obj;
+                console.log("✅ Found EyeLids bone for blinking animation");
             }
+            // Capture eye bones for thinking animation (prioritize bones over meshes)
+            if (obj.isBone && obj.name === "LeftEye") {
+                leftEye.current = obj;
+                console.log("✅ Found LeftEye bone for eye roll");
+            }
+            if (obj.isBone && obj.name === "RightEye") {
+                rightEye.current = obj;
+                console.log("✅ Found RightEye bone for eye roll");
+            }
+            if (obj.isBone && obj.name === "RightHandIndex4") {
+                rightindex4.current = obj;
+            }
+            if (obj.isBone && obj.name === "RightHandMiddle4") {
+                rightmiddle4.current = obj;
+            }
+            if (obj.isBone && obj.name === "RightHandRing4") {
+                rightring4.current = obj;
+            }
+            if (obj.isBone && obj.name === "RightHandPinky4") {
+                rightpinky4.current = obj;
+            }
+            if (obj.isBone && obj.name === "LeftHandIndex4") {
+                leftindex4.current = obj;
+            }
+            if (obj.isBone && obj.name === "LeftHandMiddle4") {
+                leftmiddle4.current = obj;
+            }
+            if (obj.isBone && obj.name === "LeftHandRing4") {
+                leftring4.current = obj;
+            }
+            if (obj.isBone && obj.name === "LeftHandPinky4") {
+                leftpinky4.current = obj;
+            }
+        });
+
+        // Verify what we captured after traversal
+        console.log("Eye capture verification:", {
+            leftEye: leftEye.current ? leftEye.current.name : "NOT FOUND",
+            rightEye: rightEye.current ? rightEye.current.name : "NOT FOUND"
         });
     }, [scene]);
 
     // ============================================
-    // BLINK ANIMATION
+    // BLINK ANIMATION (Using Shape Key)
     // ============================================
     useFrame((state, delta) => {
-        if (!eyeLidBone.current) return;
+        if (!headMesh.current) return;
 
         blinkTime.current += delta;
 
         if (blinkTime.current >= nextBlinkTime.current) {
-            const blinkDuration = 0.2;
+            const blinkDuration = 0.15; // Quick blink
             const timeSinceBlinkStart = blinkTime.current - nextBlinkTime.current;
 
             if (timeSinceBlinkStart <= blinkDuration) {
-                // 0 to 1 (closed) back to 0 (open)
-                // Sine wave from 0 to PI covers roughly "open -> closed -> open"
-                // Using sin(T * PI / Duration)
-                const blinkValue = Math.sin((timeSinceBlinkStart / blinkDuration) * Math.PI / 2);
-                // Adjust max rotation. Assuming Rotation roughly around X axis.
-                // Need to test direction. Let's assume negative X is down/closed.
-                // The user had -12 previously, which is huge (approx 4 * PI). 
-                // Usually eyelids are 0 to ~1.0 radians. Let's try -1.5 (approx 90 deg) or similar.
-                // User said "added bone to eyelids", usually a single bone for both or one for each?
-                // "name of the bone is Bone" implies singular.
-                eyeLidBone.current.rotation.x = blinkValue * 0.8; // Testing value, likely need adjustment
+                // Smooth blink animation using sine wave
+                const blinkProgress = timeSinceBlinkStart / blinkDuration;
+                const blinkValue = Math.sin(blinkProgress * Math.PI); // 0 -> 1 -> 0
+
+                // Apply to blink shape key
+                const hDict = headMesh.current.morphTargetDictionary;
+                const hInfl = headMesh.current.morphTargetInfluences;
+
+                // Debug: Check if blink shape key exists (log once)
+                if (!window.blinkShapeKeyChecked) {
+                    if (hDict.blink !== undefined) {
+                        console.log("✅ Blink shape key found at index:", hDict.blink);
+                    } else {
+                        console.log("❌ Blink shape key NOT found. Available keys:", Object.keys(hDict));
+                    }
+                    window.blinkShapeKeyChecked = true;
+                }
+
+                if (hDict.blink !== undefined) {
+                    hInfl[hDict.blink] = clampMorphInfluence(blinkValue);
+                }
+
+                // Also apply to teeth if it has the shape key
+                if (teethMesh.current) {
+                    const tDict = teethMesh.current.morphTargetDictionary;
+                    const tInfl = teethMesh.current.morphTargetInfluences;
+                    if (tDict.blink !== undefined) {
+                        tInfl[tDict.blink] = clampMorphInfluence(blinkValue);
+                    }
+                }
             } else {
-                // Blink finished
-                eyeLidBone.current.rotation.x = 0;
+                // Blink finished - reset shape key to 0
+                const hDict = headMesh.current.morphTargetDictionary;
+                const hInfl = headMesh.current.morphTargetInfluences;
+
+                if (hDict.blink !== undefined) {
+                    hInfl[hDict.blink] = 0;
+                }
+
+                if (teethMesh.current) {
+                    const tDict = teethMesh.current.morphTargetDictionary;
+                    const tInfl = teethMesh.current.morphTargetInfluences;
+                    if (tDict.blink !== undefined) {
+                        tInfl[tDict.blink] = 0;
+                    }
+                }
+
                 blinkTime.current = 0;
-                nextBlinkTime.current = Math.random() * 2 + 2; // Next blink in 2-6s
+                nextBlinkTime.current = Math.random() * 3 + 2; // Next blink in 2-5s
             }
         }
     });
@@ -271,113 +459,27 @@ function Avatar({ model, handpos, ischatting, text, audioFile, speakTrigger, onS
     // ============================================
     // TEXT/AUDIO TO VISEME CONVERSION + PLAYBACK
     // ============================================
+    // ============================================
+    // TEXT TO VISEME CONVERSION + AUDIO PLAYBACK
+    // ============================================
     useEffect(() => {
-        if (speakTrigger > 0) {
-            // STOP previous audio if any
-            stopSpeaking();
-
-            // Clean up previous audio object URL if it exists
-            if (window.currentAudio) {
-                window.currentAudio.pause();
-                window.currentAudio = null;
-            }
-
-            // CASE 1: AUDIO FILE UPLOADED
-            if (audioFile) {
-                console.log("🎤 Processing audio file:", audioFile.name);
-
-                audioToVisemesAPI(audioFile).then(visemes => {
-                    console.log("📊 Generated audio visemes:", visemes);
-
-                    setVisemeSequence(visemes);
-                    currentVisemeIndex.current = 0;
-
-                    // Create object URL and play audio
-                    const audioUrl = URL.createObjectURL(audioFile);
-                    const audio = new Audio(audioUrl);
-                    window.currentAudio = audio; // Track current audio
-
-                    audio.onplay = () => {
-                        setIsPlayingVisemes(true); // START VISUALS NOW
-                        visemePlaybackTime.current = 0;
-                        if (onSpeechStart) onSpeechStart(); // Trigger callback
-                    };
-
-                    audio.onended = () => {
-                        URL.revokeObjectURL(audioUrl); // Cleanup
-                        window.currentAudio = null;
-                        // setIsPlayingVisemes(false); // Let the loop finish gracefully
-                    };
-
-                    audio.play().catch(e => console.error("Error playing audio:", e));
-
-                }).catch(error => {
-                    console.error("Error processing audio:", error);
-                });
-            }
-            // CASE 2: TEXT INPUT (Backend TTS)
-            else if (text && text.trim() !== '') {
-
-                // Use new Backend TTS API
-                textToAudioVisemesAPI(text).then(data => {
-                    const { audio_url, visemes } = data;
-
-                    setVisemeSequence(visemes);
-                    currentVisemeIndex.current = 0; // Initialize index here
-                    // Play returned audio URL with cache busting to handle single-file overwrite
-                    const audio = new Audio(`${audio_url}?t=${new Date().getTime()}`);
-                    window.currentAudio = audio; // Track current audio
-
-                    audio.onloadedmetadata = () => {
-                        console.log("Audio Loaded. Duration:", audio.duration);
-                        if (visemes.length > 0 && audio.duration && audio.duration !== Infinity) {
-                            const lastViseme = visemes[visemes.length - 1];
-                            const visemeDuration = lastViseme.start + lastViseme.duration;
-
-                            // Calculate scaling ratio
-                            durationRatio.current = visemeDuration / audio.duration;
-                            console.log(`⏱️ Syncing: Audio ${audio.duration.toFixed(2)}s vs Visemes ${visemeDuration.toFixed(2)}s (Ratio: ${durationRatio.current.toFixed(2)})`);
-                        } else {
-                            durationRatio.current = 1;
-                        }
-                    };
-
-                    audio.onplay = () => {
-                        setIsPlayingVisemes(true); // START VISUALS NOW
-                        visemePlaybackTime.current = 0;
-                        if (onSpeechStart) onSpeechStart(); // Trigger callback
-                    };
-
-                    audio.onended = () => {
-                        window.currentAudio = null;
-                    };
-
-                    audio.play().catch(e => console.error("Error playing TTS audio:", e));
-
-                }).catch(error => {
-                    console.error("Error converting text to visemes:", error);
-                });
-            }
+        if (speakTrigger > 0 && text && text.trim() !== '') {
+            console.log(`🗣️ Avatar Component: Received speak trigger #${speakTrigger} for text:`, text.substring(0, 30) + "...");
+            speak(text);
         }
 
-        // Cleanup function for component unmount
         return () => {
-            if (window.currentAudio) {
-                window.currentAudio.pause();
-                window.currentAudio = null;
-            }
+            stopLipSync();
         };
+    }, [speakTrigger, text, speak, stopLipSync]);
 
-    }, [speakTrigger, audioFile]); // Added audioFile to dependencies
-
-    // Stop visemes and audio when text is cleared
+    // Stop lip sync and audio when text is cleared
     useEffect(() => {
         if (!text || text.trim() === '') {
-            setIsPlayingVisemes(false);
-            setVisemeSequence([]);
-            stopSpeaking(); // Stop any ongoing audio
+            stopLipSync();
+            stopSpeaking(); // Stop any legacy global audio if necessary
         }
-    }, [text]);
+    }, [text, stopLipSync]);
 
 
     // This Function Contorls how The model is adjusted when he is talking
@@ -419,172 +521,10 @@ function Avatar({ model, handpos, ischatting, text, audioFile, speakTrigger, onS
     // VISEME-DRIVEN LIP SYNC ANIMATION
     // ============================================
     // This useFrame runs every frame (~60fps) to update mouth morph targets
-    useFrame((_, delta) => {
-        if (!headMesh.current || !teethMesh.current) return;
-
-        time.current += delta;
-
-        // Get morph target dictionaries and influences arrays
-        const hDict = headMesh.current.morphTargetDictionary; // Maps morph target names to indices
-        const hInfl = headMesh.current.morphTargetInfluences; // Array of current morph values (0-1)
-        const tDict = teethMesh.current.morphTargetDictionary;
-        const tInfl = teethMesh.current.morphTargetInfluences;
-
-        // ============================================
-        // VISEME PLAYBACK (when speaking)
-        // ============================================
-        if (isPlayingVisemes && visemeSequence.length > 0) {
-            // ============================================
-            // SYNC WITH AUDIO TIMESTAMP
-            // ============================================
-            const AUDIO_LATENCY = 0.0; // Adjust if lips are ahead (positive number delays visuals)
-
-            // Use precise audio time if available, otherwise fallback to delta accumulation
-            if (window.currentAudio && !window.currentAudio.paused) {
-                // We subtract a small offset because audio hardware has latency.
-                // Scale the audio time to match the viseme timeline
-                // If audio is shorter than visemes, ratio > 1 (slow down visemes)
-                // If audio is longer than visemes, ratio < 1 (speed up visemes)
-                const scaledTime = (window.currentAudio.currentTime - AUDIO_LATENCY) * durationRatio.current;
-                visemePlaybackTime.current = Math.max(0, scaledTime);
-            } else {
-                visemePlaybackTime.current += delta;
-            }
-
-            // Get current viseme from sequence
-            let currentViseme = visemeSequence[currentVisemeIndex.current];
-
-            // ============================================
-            // ADVANCE TO NEXT VISEME
-            // ============================================
-            // Find the correct viseme for the current timestamp
-            // Instead of just checking next, we scan from current position
-            // This handles skips or lags gracefully
-
-            // 1. If current viseme is finished (time > start + duration), move forward
-            while (
-                currentVisemeIndex.current < visemeSequence.length - 1 &&
-                visemePlaybackTime.current >= visemeSequence[currentVisemeIndex.current + 1].start
-            ) {
-                currentVisemeIndex.current++;
-                currentViseme = visemeSequence[currentVisemeIndex.current];
-            }
-
-            // 2. If we somehow jumped HEAD of the audio (rewind), move backward
-            while (
-                currentVisemeIndex.current > 0 &&
-                visemePlaybackTime.current < visemeSequence[currentVisemeIndex.current].start
-            ) {
-                currentVisemeIndex.current--;
-                currentViseme = visemeSequence[currentVisemeIndex.current];
-            }
-
-            // ============================================
-            // CHECK IF PLAYBACK COMPLETE
-            // ============================================
-            // If we're on the last viseme and past its end time, stop playback
-            if (currentVisemeIndex.current === visemeSequence.length - 1) {
-                const lastViseme = visemeSequence[visemeSequence.length - 1];
-                if (visemePlaybackTime.current >= lastViseme.start + lastViseme.duration + 0.5) { // +0.5 buffer to clear mouth
-                    setIsPlayingVisemes(false);
-                    visemePlaybackTime.current = 0;
-                    currentVisemeIndex.current = 0;
-                }
-            }
-
-            // Get morph target values for current viseme
-            const morphTargets = getVisemeMorphTargets(currentViseme.viseme);
-
-            // Calculate progress through current viseme (0 to 1)
-            const visemeProgress = (visemePlaybackTime.current - currentViseme.start) / currentViseme.duration;
-
-            // Smooth blending factor - controls transition speed
-            // Lower = smoother but slower, Higher = faster but more abrupt
-            const blendSpeed = 0.10;
-
-            // Helper function to smoothly interpolate
-            const lerp = (current, target, factor) => current + (target - current) * factor;
-
-            // ============================================
-            // APPLY MORPH TARGETS TO MOUTH
-            // ============================================
-            // Each morph target controls a different aspect of mouth shape
-            // Values range from 0 (no effect) to 1 (full effect)
-
-            // MOUTH OPEN - Controls how wide the mouth opens vertically
-            if (hDict.mouthOpen !== undefined) {
-                const targetValue = morphTargets.mouthOpen * 2; // Intensified by 40% (2.2 -> 3.0)
-                const newValue = lerp(hInfl[hDict.mouthOpen], targetValue, blendSpeed);
-                hInfl[hDict.mouthOpen] = newValue;
-
-                // Apply same value to teeth mesh if it exists
-                if (tDict.mouthOpen !== undefined) {
-                    tInfl[tDict.mouthOpen] = newValue + 1;
-                }
-            }
-
-            // MOUTH SMILE - Controls smile/grin shape
-            if (hDict.mouthSmile !== undefined) {
-                const targetValue = morphTargets.mouthSmile * 0.6; // Intensified by 40% (1.2 -> 1.7)
-                const newValue = lerp(hInfl[hDict.mouthSmile], targetValue, blendSpeed);
-                hInfl[hDict.mouthSmile] = newValue;
-                if (tDict.mouthSmile !== undefined) {
-                    tInfl[tDict.mouthSmile] = newValue;
-                }
-            }
-
-            // MOUTH FUNNEL - Creates "O" shape (like saying "ooh")
-            if (hDict.mouthFunnel !== undefined) {
-                const targetValue = morphTargets.mouthFunnel * 2.2; // Intensified by 40% (2.3 -> 3.2)
-                const newValue = lerp(hInfl[hDict.mouthFunnel], targetValue, blendSpeed);
-                hInfl[hDict.mouthFunnel] = newValue;
-            }
-
-            // MOUTH PUCKER - Pushes lips forward (like kissing or "oo" sound)
-            if (hDict.mouthPucker !== undefined) {
-                const targetValue = morphTargets.mouthPucker * 2.6; // Intensified by 40% (2.3 -> 3.2)
-                const newValue = lerp(hInfl[hDict.mouthPucker], targetValue, blendSpeed);
-                hInfl[hDict.mouthPucker] = newValue;
-            }
-
-            // JAW OPEN - Controls jaw drop for wide mouth shapes
-            if (hDict.jawOpen !== undefined) {
-                const targetValue = morphTargets.jawOpen * 2.0; // Intensified by 40% (2.5 -> 3.5)
-                const newValue = lerp(hInfl[hDict.jawOpen], targetValue, blendSpeed);
-                hInfl[hDict.jawOpen] = newValue;
-            }
-
-            // ============================================
-            // FORCE MESH UPDATE
-            // ============================================
-            // Create new arrays to trigger React Three Fiber's change detection
-            // Without this, the mesh won't re-render even though values changed
-            headMesh.current.morphTargetInfluences = [...hInfl];
-            teethMesh.current.morphTargetInfluences = [...tInfl];
-
-        } else {
-            // ============================================
-            // RESET TO NEUTRAL (when not speaking)
-            // ============================================
-            // Set all morph targets back to neutral/rest position
-            if (hDict.mouthOpen !== undefined) {
-                hInfl[hDict.mouthOpen] = 0.05; // Slightly open for natural look
-                if (tDict.mouthOpen !== undefined) {
-                    tInfl[tDict.mouthOpen] = 0.05;
-                }
-            }
-            if (hDict.mouthSmile !== undefined) {
-                hInfl[hDict.mouthSmile] = 0; // No smile
-                if (tDict.mouthSmile !== undefined) {
-                    tInfl[tDict.mouthSmile] = 0;
-                }
-            }
-            // Reset all other morph targets to 0
-            if (hDict.mouthFunnel !== undefined) hInfl[hDict.mouthFunnel] = 0;
-            if (hDict.mouthPucker !== undefined) hInfl[hDict.mouthPucker] = 0;
-            if (hDict.jawOpen !== undefined) hInfl[hDict.jawOpen] = 0;
-        }
-    });
+    // ============================================
+    // OLD VISEME ANIMATION LOOP REMOVED
+    // The useLipSync hook now handles all shape key updates efficiently.
+    // ============================================
 
     // This Function targets Arms for animation
     useEffect(() => {
@@ -610,6 +550,12 @@ function Avatar({ model, handpos, ischatting, text, audioFile, speakTrigger, onS
                     case "LeftForeArm":
                         leftForeArm.current = obj;
                         break;
+                    case "LeftHand":
+                        leftHand.current = obj;
+                        break;
+                    case "RightHand":
+                        rightHand.current = obj;
+                        break;
                     case "Head":
                         head.current = obj;
                         break;
@@ -622,92 +568,1019 @@ function Avatar({ model, handpos, ischatting, text, audioFile, speakTrigger, onS
 
     }, [scene]);
 
+    useFrame((state, delta) => {
+        if (rightArm.current && rightForeArm.current && rightHand.current) {
+
+        }
+    })
+
 
 
 
     useFrame((state, delta) => {
         time.current += delta;
 
-        // ========================================
-        // RIGHT ARM ANIMATION
-        // ========================================
-        // Right arm - primary gesturing (larger movements)
-        if (rightArm.current) {
-            // gesture1: Controls side-to-side movement (Z-axis rotation)
-            // - Math.sin(time * speed) creates oscillation
-            // - Speed 1.2 = how fast the gesture repeats
-            // - Amplitude 0.05 = how far the arm moves side to side
-            const gesture1 = Math.sin(time.current * 1.2) * 0.05;
+        if (emotions?.toLowerCase() === "happy") {
+            // Apply smile using morph targets
+            if (headMesh.current && teethMesh.current) {
+                const hDict = headMesh.current.morphTargetDictionary;
+                const hInfl = headMesh.current.morphTargetInfluences;
+                const tDict = teethMesh.current.morphTargetDictionary;
+                const tInfl = teethMesh.current.morphTargetInfluences;
 
-            // gesture2: Controls forward/backward movement (X-axis rotation)
-            // - Speed 2 = faster oscillation for natural variation
-            // - Amplitude 0.1 = subtle forward/back motion
-            const gesture2 = Math.sin(time.current * 2 + 1) * 0.01;
 
-            // Apply rotations:
-            // rotation.z: Side-to-side (0.3 = base position, gesture1 = animation)
-            rightArm.current.rotation.z = gesture1;
-            // rotation.x: Up/down angle (1.3 = arm pointing down, gesture2 = subtle movement)
-            rightArm.current.rotation.x = handpos + gesture2;
+
+                // Debug: Log available morph targets (only once)
+                if (!window.morphTargetsLogged) {
+                    console.log("Available Head Morph Targets:", Object.keys(hDict));
+                    console.log("Available Teeth Morph Targets:", Object.keys(tDict));
+                    window.morphTargetsLogged = true;
+                }
+
+                // Smooth smile intensity (1.0 configured for happy)
+                const targetSmile = currentEmotion.smileIntensity || 0;
+                const blendSpeed = 0.2; // Faster transition (was 0.05)
+                const lerp = (current, target, factor) => current + (target - current) * factor;
+                const smoothStep = (t) => t * t * (3 - 2 * t);
+
+
+                if (head.current && !headResetDone.current) {
+
+                    // Capture starting rotation ONCE
+                    if (headTransitionTime.current === 0) {
+                        headStartRot.current = {
+                            x: head.current.rotation.x,
+                            y: head.current.rotation.y,
+                            z: head.current.rotation.z,
+                        };
+                    }
+
+                    headTransitionTime.current += delta;
+
+                    const duration = 0.8; // seconds
+                    const t = Math.min(headTransitionTime.current / duration, 1);
+                    const progress = smoothStep(t);
+
+                    head.current.rotation.x = lerp(headStartRot.current.x, -0.2, progress);
+                    head.current.rotation.y = lerp(headStartRot.current.y, 0, progress);
+                    head.current.rotation.z = lerp(headStartRot.current.z, 0, progress);
+
+                    if (t >= 1) {
+                        headResetDone.current = true;   // NEVER AGAIN
+                    }
+                }
+
+                if (leftEye.current.rotation.y !== 0) {
+                    leftEye.current.rotation.y = lerp(leftEye.current.rotation.y, 0, 0.1);
+                    rightEye.current.rotation.y = lerp(rightEye.current.rotation.y, 0, 0.1);
+                }
+
+
+                // ========================================
+                // ARM REPOSITIONING - Smooth transition to neutral
+                // ========================================
+                if (!armResetDone.current && rightArm.current && leftArm.current && rightForeArm.current && leftForeArm.current) {
+                    const smoothStep = (t) => t * t * (3 - 2 * t);
+
+                    // Capture starting rotations ONCE
+                    if (armTransitionTime.current === 0) {
+                        armStartRot.current = {
+                            rightArm: { x: rightArm.current.rotation.x, y: rightArm.current.rotation.y, z: rightArm.current.rotation.z },
+                            leftArm: { x: leftArm.current.rotation.x, y: leftArm.current.rotation.y, z: leftArm.current.rotation.z },
+                            rightForeArm: { x: rightForeArm.current.rotation.x, y: rightForeArm.current.rotation.y, z: rightForeArm.current.rotation.z },
+                            leftForeArm: { x: leftForeArm.current.rotation.x, y: leftForeArm.current.rotation.y, z: leftForeArm.current.rotation.z }
+                        };
+                    }
+
+                    armTransitionTime.current += delta;
+
+                    const duration = 0.8; // seconds
+                    const t = Math.min(armTransitionTime.current / duration, 1);
+                    const progress = smoothStep(t);
+
+                    // Transition to neutral position (handpos for x, 0 for y and z)
+                    rightArm.current.rotation.x = lerp(armStartRot.current.rightArm.x, handpos, progress);
+                    rightArm.current.rotation.y = lerp(armStartRot.current.rightArm.y, 0, progress);
+                    rightArm.current.rotation.z = lerp(armStartRot.current.rightArm.z, 0, progress);
+
+                    leftArm.current.rotation.x = lerp(armStartRot.current.leftArm.x, handpos, progress);
+                    leftArm.current.rotation.y = lerp(armStartRot.current.leftArm.y, 0, progress);
+                    leftArm.current.rotation.z = lerp(armStartRot.current.leftArm.z, 0, progress);
+
+                    rightForeArm.current.rotation.x = lerp(armStartRot.current.rightForeArm.x, 0, progress);
+                    rightForeArm.current.rotation.y = lerp(armStartRot.current.rightForeArm.y, 0, progress);
+                    rightForeArm.current.rotation.z = lerp(armStartRot.current.rightForeArm.z, 0, progress);
+
+                    leftForeArm.current.rotation.x = lerp(armStartRot.current.leftForeArm.x, 0, progress);
+                    leftForeArm.current.rotation.y = lerp(armStartRot.current.leftForeArm.y, 0, progress);
+                    leftForeArm.current.rotation.z = lerp(armStartRot.current.leftForeArm.z, 0, progress);
+
+                    if (t >= 1) {
+                        armResetDone.current = true; // Mark transition complete
+                    }
+                }
+                // Apply smile to mouthSmile morph target
+                if (hDict.mouthSmile !== undefined) {
+                    const currentValue = Number(hInfl[hDict.mouthSmile]) || 0;
+                    hInfl[hDict.mouthSmile] = clampMorphInfluence(lerp(currentValue, targetSmile, blendSpeed));
+
+                    // Debug log (only when value changes significantly)
+                    if (Math.abs(hInfl[hDict.mouthSmile] - targetSmile) > 0.01) {
+                        console.log("mouthSmile:", hInfl[hDict.mouthSmile].toFixed(3), "/ target:", targetSmile);
+                    }
+                } else {
+                    if (!window.mouthSmileWarned) {
+                        console.log("mouthSmile morph target NOT FOUND");
+                        window.mouthSmileWarned = true;
+                    }
+                }
+
+                // Also apply to teeth if available
+                if (tDict.mouthSmile !== undefined) {
+                    const currentValue = Number(tInfl[tDict.mouthSmile]) || 0;
+                    tInfl[tDict.mouthSmile] = clampMorphInfluence(lerp(currentValue, targetSmile, blendSpeed));
+                }
+
+                // Add slight mouth open for natural smile (optional)
+                if (hDict.viseme_aa !== undefined) {
+                    const currentValue = Number(hInfl[hDict.viseme_aa]) || 0;
+                    hInfl[hDict.viseme_aa] = clampMorphInfluence(lerp(currentValue, targetSmile * 0.2, blendSpeed));
+                }
+                if (tDict.viseme_aa !== undefined) {
+                    const currentValue = Number(tInfl[tDict.viseme_aa]) || 0;
+                    tInfl[tDict.viseme_aa] = clampMorphInfluence(lerp(currentValue, targetSmile * 0.2, blendSpeed));
+                }
+
+            }
         }
+        else if (currentEmotion.customHandPath && emotions?.toLowerCase() === 'explain2') {
+            // ========================================
+            // EXPLAIN2 CUSTOM GESTURE - Both Arms
+            // ========================================
+            const animationCycle = 8;
+            const cycleTime = time.current % animationCycle;
+            const rightCycle = 12;
+            const rightCycleTime = (time.current + 1) % rightCycle;
 
-        // Right forearm - adds emphasis to gestures
-        if (rightForeArm.current) {
-            // emphasis: Bends the forearm for more expressive gestures
-            // - Speed 1.5 = slightly faster than upper arm
-            // - Amplitude 0.2 = moderate bend amount
-            const emphasis = Math.sin(time.current * 0.5 + 0.5) * 0.06;
-            rightForeArm.current.rotation.z = emphasis;
-            rightForeArm.current.rotation.x = 0.1 + emphasis;
+            // Helper functions
+            const lerp = (start, end, t) => start + (end - start) * Math.min(Math.max(t, 0), 1);
+            const smoothStep = (t) => t * t * (3 - 2 * t);
+            if (!armResetDone.current && rightArm.current && leftArm.current && rightForeArm.current && leftForeArm.current) {
+                const smoothStep1 = (t) => t * t * (3 - 2 * t);
+
+                // Capture starting rotations ONCE
+                if (armTransitionTime.current === 0) {
+                    armStartRot.current = {
+                        rightArm: { x: rightArm.current.rotation.x, y: rightArm.current.rotation.y, z: rightArm.current.rotation.z },
+                        leftArm: { x: leftArm.current.rotation.x, y: leftArm.current.rotation.y, z: leftArm.current.rotation.z },
+                        rightForeArm: { x: rightForeArm.current.rotation.x, y: rightForeArm.current.rotation.y, z: rightForeArm.current.rotation.z },
+                        leftForeArm: { x: leftForeArm.current.rotation.x, y: leftForeArm.current.rotation.y, z: leftForeArm.current.rotation.z }
+                    };
+                }
+
+                armTransitionTime.current += delta;
+
+                const duration = 0.8; // seconds
+                const t = Math.min(armTransitionTime.current / duration, 1);
+                const progress = smoothStep1(t);
+
+                // Transition to neutral position (handpos for x, 0 for y and z)
+                rightArm.current.rotation.x = lerp(armStartRot.current.rightArm.x, handpos, progress);
+                rightArm.current.rotation.y = lerp(armStartRot.current.rightArm.y, 0, progress);
+                rightArm.current.rotation.z = lerp(armStartRot.current.rightArm.z, 0, progress);
+
+                leftArm.current.rotation.x = lerp(armStartRot.current.leftArm.x, handpos, progress);
+                leftArm.current.rotation.y = lerp(armStartRot.current.leftArm.y, 0, progress);
+                leftArm.current.rotation.z = lerp(armStartRot.current.leftArm.z, 0, progress);
+
+                rightForeArm.current.rotation.x = lerp(armStartRot.current.rightForeArm.x, 0, progress);
+                rightForeArm.current.rotation.y = lerp(armStartRot.current.rightForeArm.y, 0, progress);
+                rightForeArm.current.rotation.z = lerp(armStartRot.current.rightForeArm.z, 0, progress);
+
+                leftForeArm.current.rotation.x = lerp(armStartRot.current.leftForeArm.x, 0, progress);
+                leftForeArm.current.rotation.y = lerp(armStartRot.current.leftForeArm.y, 0, progress);
+                leftForeArm.current.rotation.z = lerp(armStartRot.current.leftForeArm.z, 0, progress);
+
+                if (t >= 1) {
+                    armResetDone.current = true; // Mark transition complete
+                }
+            }
+
+            if (head.current && !headResetDone.current) {
+
+                // Capture starting rotation ONCE
+                if (headTransitionTime.current === 0) {
+                    headStartRot.current = {
+                        x: head.current.rotation.x,
+                        y: head.current.rotation.y,
+                        z: head.current.rotation.z,
+                    };
+                }
+
+                headTransitionTime.current += delta;
+
+                const duration = 0.8; // seconds
+                const t = Math.min(headTransitionTime.current / duration, 1);
+                const progress = smoothStep(t);
+
+                head.current.rotation.x = lerp(headStartRot.current.x, -0.2, progress);
+                head.current.rotation.y = lerp(headStartRot.current.y, 0, progress);
+                head.current.rotation.z = lerp(headStartRot.current.z, 0, progress);
+
+                if (t >= 1) {
+                    headResetDone.current = true;   // NEVER AGAIN
+                }
+            }
+
+
+            if (leftEye.current.rotation.y !== 0) {
+                leftEye.current.rotation.y = lerp(leftEye.current.rotation.y, 0, 0.1);
+                rightEye.current.rotation.y = lerp(rightEye.current.rotation.y, 0, 0.1);
+            }
+
+            // RIGHT ARM - Complementary Presentation Gesture
+            if (rightArm.current && rightForeArm.current && rightHand.current) {
+
+                let rightArmRotationZ = 0;
+                let rightArmRotationX = 0;
+                let rightForearmRotationZ = 0;
+                let rightForearmRotationY = 0;
+                let rightForearmRotationX = 0;
+
+                if (currentEmotion.gestureReset === 1) {
+                    // Start transition
+                    if (!isTransitioning.current) {
+                        isTransitioning.current = true;
+                        transitionTime.current = 0;
+                        // Store starting rotations
+                        transitionStartRotations.current.right = {
+                            x: rightForeArm.current.rotation.x,
+                            y: rightForeArm.current.rotation.y,
+                            z: rightForeArm.current.rotation.z
+                        };
+                        transitionStartRotations.current.left = {
+                            x: leftForeArm.current.rotation.x,
+                            y: leftForeArm.current.rotation.y,
+                            z: leftForeArm.current.rotation.z
+                        };
+                    }
+
+                    // Increment time each frame
+                    transitionTime.current += delta;
+
+                    const transitionDuration = 1.0; // 1 second transition
+                    const normalizedTime = Math.min(transitionTime.current / transitionDuration, 1);
+                    const progress = smoothStep(normalizedTime);
+
+                    // Apply smooth transitions from start position to 0
+                    rightForeArm.current.rotation.x = lerp(transitionStartRotations.current.right.x, 0, progress);
+                    rightForeArm.current.rotation.y = lerp(transitionStartRotations.current.right.y, 0, progress);
+                    rightForeArm.current.rotation.z = lerp(transitionStartRotations.current.right.z, 0, progress);
+
+                    leftForeArm.current.rotation.x = lerp(transitionStartRotations.current.left.x, 0, progress);
+                    leftForeArm.current.rotation.y = lerp(transitionStartRotations.current.left.y, 0, progress);
+                    leftForeArm.current.rotation.z = lerp(transitionStartRotations.current.left.z, 0, progress);
+
+                    // End transition when complete
+                    if (normalizedTime >= 1) {
+                        currentEmotion.gestureReset = 0;
+                        isTransitioning.current = false;
+                    }
+                }
+
+
+                if (rightCycleTime < 2) {
+                    rightArmRotationZ = 0;
+                    rightArmRotationX = 0;
+                    rightForearmRotationZ = 0;
+                    rightForearmRotationY = 0;
+                    rightForearmRotationX = 0;
+                }
+                else if (rightCycleTime < 3.5) {
+                    const progress = smoothStep((rightCycleTime - 2) / 1.5);
+                    rightArmRotationZ = lerp(0, 0, progress);
+                    rightArmRotationX = lerp(0, 0, progress);
+                    rightForearmRotationY = lerp(0, 0.2, progress);
+                    rightForearmRotationZ = lerp(0, -1.2, progress);
+                    rightForearmRotationX = lerp(0, 1.5, progress);
+                }
+                else if (rightCycleTime < 4) {
+                    rightArmRotationZ = 0;
+                    rightArmRotationX = 0;
+                    rightForearmRotationZ = -1.2;
+                    rightForearmRotationY = 0.2;
+                    rightForearmRotationX = 1.5;
+                }
+                else if (rightCycleTime < 8) {
+                    const progress = smoothStep((rightCycleTime - 4) / 4);
+                    rightArmRotationZ = lerp(0, 0, progress);
+                    rightArmRotationX = lerp(0, 0, progress);
+                    rightForearmRotationX = lerp(1.5, 0, progress);
+                    rightForearmRotationY = lerp(0.2, -1, progress);
+                    rightForearmRotationZ = lerp(-1.2, -1.2, progress);
+                }
+                else {
+                    const progress = smoothStep((rightCycleTime - 8) / 4);
+                    rightArmRotationZ = lerp(0, 0, progress);
+                    rightArmRotationX = lerp(0, 0, progress);
+                    rightForearmRotationX = lerp(0, 0, progress);
+                    rightForearmRotationY = lerp(-1, 0, progress);
+                    rightForearmRotationZ = lerp(-1.2, 0, progress);
+                }
+
+                rightArm.current.rotation.z = rightArmRotationZ;
+                rightArm.current.rotation.x = rightArmRotationX + handpos;
+                rightForeArm.current.rotation.z = rightForearmRotationZ;
+                rightForeArm.current.rotation.y = rightForearmRotationY;
+                rightForeArm.current.rotation.x = rightForearmRotationX;
+            }
+
+            // LEFT ARM - Presentation Gesture
+            if (leftArm.current && leftForeArm.current && leftHand.current) {
+                let leftArmRotationZ = 0;
+                let leftArmRotationX = 0;
+                let leftForearmRotationZ = 0;
+                let leftForearmRotationY = 0;
+                let leftForearmRotationX = 0;
+
+                if (cycleTime < 2) {
+                    leftArmRotationZ = 0;
+                    leftArmRotationX = 0;
+                    leftForearmRotationZ = 0;
+                    leftForearmRotationY = 0;
+                    leftForearmRotationX = 0;
+                }
+                else if (cycleTime < 3.5) {
+                    const progress = smoothStep((cycleTime - 2) / 1.5);
+                    leftArmRotationZ = lerp(0, 0, progress);
+                    leftArmRotationX = lerp(0, 0, progress);
+                    leftForearmRotationY = lerp(0, -0.2, progress);
+                    leftForearmRotationZ = lerp(0, 1.2, progress);
+                    leftForearmRotationX = lerp(0, 1.5, progress);
+                }
+                else if (cycleTime < 5) {
+                    leftArmRotationZ = 0;
+                    leftArmRotationX = 0;
+                    leftForearmRotationZ = 1.2;
+                    leftForearmRotationY = -0.2;
+                    leftForearmRotationX = 1.5;
+                }
+                else {
+                    const progress = smoothStep((cycleTime - 5) / 3);
+                    leftArmRotationZ = lerp(0, 0, progress);
+                    leftArmRotationX = lerp(0, 0, progress);
+                    leftForearmRotationZ = lerp(1.2, 0, progress);
+                    leftForearmRotationY = lerp(-0.2, 0, progress);
+                    leftForearmRotationX = lerp(1.5, 0, progress);
+                }
+
+                leftArm.current.rotation.z = leftArmRotationZ;
+                leftArm.current.rotation.x = leftArmRotationX + handpos;
+                leftForeArm.current.rotation.z = leftForearmRotationZ;
+                leftForeArm.current.rotation.y = leftForearmRotationY;
+                leftForeArm.current.rotation.x = leftForearmRotationX;
+            }
         }
+        else if (currentEmotion.customHandPath && emotions?.toLowerCase() === 'explain1') {
+            const animationCycle = 8;
+            const cycleTime = time.current % animationCycle;
+            const rightCycle = 12;
+            const rightCycleTime = (time.current + 1) % rightCycle;
 
-        // ========================================
-        // LEFT ARM ANIMATION
-        // ========================================
-        // Left arm - secondary gesturing (offset timing for natural look)
-        if (leftArm.current) {
-            // gesture3: Left arm side-to-side movement
-            // - Speed 1.1 = slightly different from right arm (more natural)
-            // - Phase shift +2 = starts at different point in cycle
-            const gesture3 = Math.sin(time.current * 1.1 + 2) * 0.05;
+            // Helper functions
+            const lerp = (current, target, factor) => current + (target - current) * factor;
+            const smoothStep = (t) => t * t * (3 - 2 * t);
 
-            // gesture4: Left arm forward/backward movement
-            // - Speed 0.9 = slower than right arm for variation
-            const gesture4 = Math.sin(time.current * 0.9 + 3) * 0.01;
+            if (!armResetDone.current && rightArm.current && leftArm.current && rightForeArm.current && leftForeArm.current) {
+                const smoothStep1 = (t) => t * t * (3 - 2 * t);
 
-            // Apply rotations (negative Z for opposite direction):
-            leftArm.current.rotation.z = 0 + gesture3; // Negative base = arms symmetric
-            leftArm.current.rotation.x = handpos + gesture4; // Same down angle as right
+                // Capture starting rotations ONCE
+                if (armTransitionTime.current === 0) {
+                    armStartRot.current = {
+                        rightArm: { x: rightArm.current.rotation.x, y: rightArm.current.rotation.y, z: rightArm.current.rotation.z },
+                        leftArm: { x: leftArm.current.rotation.x, y: leftArm.current.rotation.y, z: leftArm.current.rotation.z },
+                        rightForeArm: { x: rightForeArm.current.rotation.x, y: rightForeArm.current.rotation.y, z: rightForeArm.current.rotation.z },
+                        leftForeArm: { x: leftForeArm.current.rotation.x, y: leftForeArm.current.rotation.y, z: leftForeArm.current.rotation.z }
+                    };
+                }
+
+                armTransitionTime.current += delta;
+
+                const duration = 0.8; // seconds
+                const t = Math.min(armTransitionTime.current / duration, 1);
+                const progress = smoothStep1(t);
+
+                rightForeArm.current.rotation.x = lerp(armStartRot.current.rightForeArm.x, 0, progress);
+                rightForeArm.current.rotation.y = lerp(armStartRot.current.rightForeArm.y, 0, progress);
+                rightForeArm.current.rotation.z = lerp(armStartRot.current.rightForeArm.z, 0, progress);
+
+                leftForeArm.current.rotation.x = lerp(armStartRot.current.leftForeArm.x, 0, progress);
+                leftForeArm.current.rotation.y = lerp(armStartRot.current.leftForeArm.y, 0, progress);
+                leftForeArm.current.rotation.z = lerp(armStartRot.current.leftForeArm.z, 0, progress);
+
+                if (t >= 1) {
+                    armResetDone.current = true; // Mark transition complete
+                }
+            }
+
+
+            if (head.current && !headResetDone.current) {
+
+                // Capture starting rotation ONCE
+                if (headTransitionTime.current === 0) {
+                    headStartRot.current = {
+                        x: head.current.rotation.x,
+                        y: head.current.rotation.y,
+                        z: head.current.rotation.z,
+                    };
+                }
+
+                headTransitionTime.current += delta;
+
+                const duration = 0.8; // seconds
+                const t = Math.min(headTransitionTime.current / duration, 1);
+                const progress = smoothStep(t);
+
+                head.current.rotation.x = lerp(headStartRot.current.x, -0.2, progress);
+                head.current.rotation.y = lerp(headStartRot.current.y, 0, progress);
+                head.current.rotation.z = lerp(headStartRot.current.z, 0, progress);
+
+                if (t >= 1) {
+                    headResetDone.current = true;   // NEVER AGAIN
+                }
+            }
+
+            if (leftEye.current.rotation.y !== 0) {
+                leftEye.current.rotation.y = lerp(leftEye.current.rotation.y, 0, 0.1);
+                rightEye.current.rotation.y = lerp(rightEye.current.rotation.y, 0, 0.1);
+            }
+
+
+            // RIGHT ARM - Complementary Presentation Gesture
+            if (rightArm.current && rightForeArm.current && rightHand.current) {
+
+                let rightArmRotationZ = 0;
+                let rightArmRotationX = 0;
+                let rightForearmRotationZ = 0;
+                let rightForearmRotationY = 0;
+                let rightForearmRotationX = 0;
+
+
+                if (rightCycleTime < 2) {
+                    rightArmRotationZ = 0;
+                    rightArmRotationX = 0;
+                    rightForearmRotationZ = 0;
+                    rightForearmRotationY = 0;
+                    rightForearmRotationX = 0;
+                }
+                else if (rightCycleTime < 3.5) {
+                    const progress = smoothStep((rightCycleTime - 2) / 1.5);
+                    rightArmRotationZ = lerp(0, 0, progress);
+                    rightArmRotationX = lerp(0, 0, progress);
+                    rightForearmRotationY = lerp(0, 0.1, progress);
+                    rightForearmRotationZ = lerp(0, -0.6, progress);
+                    rightForearmRotationX = lerp(0, 0.8, progress);
+                }
+                else if (rightCycleTime < 4) {
+                    rightArmRotationZ = 0;
+                    rightArmRotationX = 0;
+                    rightForearmRotationZ = -0.6;
+                    rightForearmRotationY = 0.1;
+                    rightForearmRotationX = 0.8;
+                }
+                else if (rightCycleTime < 8) {
+                    const progress = smoothStep((rightCycleTime - 4) / 4);
+                    rightArmRotationZ = lerp(0, 0, progress);
+                    rightArmRotationX = lerp(0, 0, progress);
+                    rightForearmRotationX = lerp(0.8, 0, progress);
+                    rightForearmRotationY = lerp(0.1, -0.5, progress);
+                    rightForearmRotationZ = lerp(-0.6, -0.6, progress);
+                }
+                else {
+                    const progress = smoothStep((rightCycleTime - 8) / 4);
+                    rightArmRotationZ = lerp(0, 0, progress);
+                    rightArmRotationX = lerp(0, 0, progress);
+                    rightForearmRotationX = lerp(0, 0, progress);
+                    rightForearmRotationY = lerp(-0.5, 0, progress);
+                    rightForearmRotationZ = lerp(-0.6, 0, progress);
+                }
+
+                rightArm.current.rotation.z = rightArmRotationZ;
+                rightArm.current.rotation.x = rightArmRotationX + handpos;
+                rightForeArm.current.rotation.z = rightForearmRotationZ;
+                rightForeArm.current.rotation.y = rightForearmRotationY;
+                rightForeArm.current.rotation.x = rightForearmRotationX;
+            }
+
+            // LEFT ARM - Presentation Gesture
+            if (leftArm.current && leftForeArm.current && leftHand.current) {
+                let leftArmRotationZ = 0;
+                let leftArmRotationX = 0;
+                let leftForearmRotationZ = 0;
+                let leftForearmRotationY = 0;
+                let leftForearmRotationX = 0;
+
+                if (cycleTime < 2) {
+                    leftArmRotationZ = 0;
+                    leftArmRotationX = 0;
+                    leftForearmRotationZ = 0;
+                    leftForearmRotationY = 0;
+                    leftForearmRotationX = 0;
+                }
+                else if (cycleTime < 3.5) {
+                    const progress = smoothStep((cycleTime - 2) / 1.5);
+                    leftArmRotationZ = lerp(0, 0, progress);
+                    leftArmRotationX = lerp(0, 0, progress);
+                    leftForearmRotationY = lerp(0, -0.1, progress);
+                    leftForearmRotationZ = lerp(0, 0.6, progress);
+                    leftForearmRotationX = lerp(0, 0.8, progress);
+                }
+                else if (cycleTime < 5) {
+                    leftArmRotationZ = 0;
+                    leftArmRotationX = 0;
+                    leftForearmRotationZ = 0.6;
+                    leftForearmRotationY = -0.1;
+                    leftForearmRotationX = 0.8;
+                }
+                else {
+                    const progress = smoothStep((cycleTime - 5) / 3);
+                    leftArmRotationZ = lerp(0, 0, progress);
+                    leftArmRotationX = lerp(0, 0, progress);
+                    leftForearmRotationZ = lerp(0.6, 0, progress);
+                    leftForearmRotationY = lerp(-0.1, 0, progress);
+                    leftForearmRotationX = lerp(0.8, 0, progress);
+                }
+
+                leftArm.current.rotation.z = leftArmRotationZ;
+                leftArm.current.rotation.x = leftArmRotationX + handpos;
+                leftForeArm.current.rotation.z = leftForearmRotationZ;
+                leftForeArm.current.rotation.y = leftForearmRotationY;
+                leftForeArm.current.rotation.x = leftForearmRotationX;
+            }
         }
+        else if (emotions?.toLowerCase() === "sad") {
+            if (headMesh.current && teethMesh.current) {
+                const hDict = headMesh.current.morphTargetDictionary;
+                const hInfl = headMesh.current.morphTargetInfluences;
+                const tDict = teethMesh.current.morphTargetDictionary;
+                const tInfl = teethMesh.current.morphTargetInfluences;
 
-        // Left forearm - complementary movement
-        if (leftForeArm.current) {
-            // complement: Forearm bend with different timing
-            // - Speed 1.4 = unique rhythm
-            // - Phase shift +1.5 = offset from right forearm
-            const complement = Math.sin(time.current * 0.8 + 1.5) * 0.08
-                ;
-            leftForeArm.current.rotation.z = 0 + complement; // Negative for symmetry
-            leftForeArm.current.rotation.x = 0.1 + complement;
+
+                // Smooth smile intensity (1.0 configured for happy)
+                const targetSmile = currentEmotion.smileIntensity || 0;
+                const blendSpeed = 0.2; // Faster transition (was 0.05)
+                const lerp = (current, target, factor) => current + (target - current) * factor;
+                const smoothStep = (t) => t * t * (3 - 2 * t);
+
+
+                if (head.current && !headResetDone.current) {
+
+                    // Capture starting rotation ONCE
+                    if (headTransitionTime.current === 0) {
+                        headStartRot.current = {
+                            x: head.current.rotation.x,
+                            y: head.current.rotation.y,
+                            z: head.current.rotation.z,
+                        };
+                    }
+
+                    headTransitionTime.current += delta;
+
+                    const duration = 0.8; // seconds
+                    const t = Math.min(headTransitionTime.current / duration, 1);
+                    const progress = smoothStep(t);
+
+                    head.current.rotation.x = lerp(headStartRot.current.x, 0, progress);
+                    head.current.rotation.y = lerp(headStartRot.current.y, 0, progress);
+                    head.current.rotation.z = lerp(headStartRot.current.z, 0, progress);
+
+                    if (t >= 1) {
+                        headResetDone.current = true;   // NEVER AGAIN
+                    }
+                }
+                // ========================================
+                // ARM REPOSITIONING - Smooth transition to neutral
+                // ========================================
+                if (!armResetDone.current && rightArm.current && leftArm.current && rightForeArm.current && leftForeArm.current) {
+                    const smoothStep = (t) => t * t * (3 - 2 * t);
+
+                    // Capture starting rotations ONCE
+                    if (armTransitionTime.current === 0) {
+                        armStartRot.current = {
+                            rightArm: { x: rightArm.current.rotation.x, y: rightArm.current.rotation.y, z: rightArm.current.rotation.z },
+                            leftArm: { x: leftArm.current.rotation.x, y: leftArm.current.rotation.y, z: leftArm.current.rotation.z },
+                            rightForeArm: { x: rightForeArm.current.rotation.x, y: rightForeArm.current.rotation.y, z: rightForeArm.current.rotation.z },
+                            leftForeArm: { x: leftForeArm.current.rotation.x, y: leftForeArm.current.rotation.y, z: leftForeArm.current.rotation.z }
+                        };
+                    }
+
+                    armTransitionTime.current += delta;
+
+                    const duration = 0.8; // seconds
+                    const t = Math.min(armTransitionTime.current / duration, 1);
+                    const progress = smoothStep(t);
+
+                    // Transition to neutral position (handpos for x, 0 for y and z)
+                    rightArm.current.rotation.x = lerp(armStartRot.current.rightArm.x, handpos, progress);
+                    rightArm.current.rotation.y = lerp(armStartRot.current.rightArm.y, 0, progress);
+                    rightArm.current.rotation.z = lerp(armStartRot.current.rightArm.z, 0, progress);
+
+                    leftArm.current.rotation.x = lerp(armStartRot.current.leftArm.x, handpos, progress);
+                    leftArm.current.rotation.y = lerp(armStartRot.current.leftArm.y, 0, progress);
+                    leftArm.current.rotation.z = lerp(armStartRot.current.leftArm.z, 0, progress);
+
+                    rightForeArm.current.rotation.x = lerp(armStartRot.current.rightForeArm.x, 0, progress);
+                    rightForeArm.current.rotation.y = lerp(armStartRot.current.rightForeArm.y, 0, progress);
+                    rightForeArm.current.rotation.z = lerp(armStartRot.current.rightForeArm.z, 0, progress);
+
+                    leftForeArm.current.rotation.x = lerp(armStartRot.current.leftForeArm.x, 0, progress);
+                    leftForeArm.current.rotation.y = lerp(armStartRot.current.leftForeArm.y, 0, progress);
+                    leftForeArm.current.rotation.z = lerp(armStartRot.current.leftForeArm.z, 0, progress);
+
+                    if (t >= 1) {
+                        armResetDone.current = true; // Mark transition complete
+                    }
+                }
+
+                if (hDict.blink !== undefined) {
+                    hInfl[hDict.blink] = clampMorphInfluence(0.4);
+                }
+
+                // Apply smile to mouthSmile morph target
+                if (hDict.mouthSmile !== undefined) {
+                    const currentValue = Number(hInfl[hDict.mouthSmile]) || 0;
+                    hInfl[hDict.mouthSmile] = clampMorphInfluence(lerp(currentValue, targetSmile, blendSpeed));
+
+                    // Debug log (only when value changes significantly)
+                    if (Math.abs(hInfl[hDict.mouthSmile] - targetSmile) > 0.01) {
+                        console.log("mouthSmile:", hInfl[hDict.mouthSmile].toFixed(3), "/ target:", targetSmile);
+                    }
+                } else {
+                    if (!window.mouthSmileWarned) {
+                        console.log("mouthSmile morph target NOT FOUND");
+                        window.mouthSmileWarned = true;
+                    }
+                }
+
+                // Also apply to teeth if available
+                if (tDict.mouthSmile !== undefined) {
+                    const currentValue = Number(tInfl[tDict.mouthSmile]) || 0;
+                    tInfl[tDict.mouthSmile] = clampMorphInfluence(lerp(currentValue, targetSmile, blendSpeed));
+                }
+
+                // Add slight mouth open for natural smile (optional)
+                if (hDict.viseme_aa !== undefined) {
+                    const currentValue = Number(hInfl[hDict.viseme_aa]) || 0;
+                    hInfl[hDict.viseme_aa] = clampMorphInfluence(lerp(currentValue, targetSmile * 0.2, blendSpeed));
+                }
+                if (tDict.viseme_aa !== undefined) {
+                    const currentValue = Number(tInfl[tDict.viseme_aa]) || 0;
+                    tInfl[tDict.viseme_aa] = clampMorphInfluence(lerp(currentValue, targetSmile * 0.2, blendSpeed));
+                }
+
+            }
         }
+        else if (emotions?.toLowerCase() === "natural") {
+            if (headMesh.current && teethMesh.current) {
+                const hDict = headMesh.current.morphTargetDictionary;
+                const hInfl = headMesh.current.morphTargetInfluences;
+                const tDict = teethMesh.current.morphTargetDictionary;
+                const tInfl = teethMesh.current.morphTargetInfluences;
 
-        // ========================================
-        // HEAD ANIMATION
-        // ========================================
-        // Head - subtle nodding and tilting for engagement
-        if (head.current) {
-            // nod: Up/down head movement (like saying "yes")
-            // - Speed 0.8 = slow, thoughtful nodding
-            // - Amplitude 0.02 = subtle movement
-            const nod = Math.sin(time.current * 0.8 + 2) * 0.02;
+                // Smooth smile intensity (1.0 configured for happy)
+                const targetSmile = currentEmotion.smileIntensity || 0;
+                const blendSpeed = 0.2; // Faster transition (was 0.05)
+                const lerp = (current, target, factor) => current + (target - current) * factor;
+                const smoothStep = (t) => t * t * (3 - 2 * t);
 
-            // tilt: Side-to-side head tilt (adds personality)
-            // - Speed 0.5 = very slow, gentle tilt
-            // - Amplitude 0.02 = very subtle
-            const tilt = Math.sin(time.current * 0.5) * 0.02;
+                if (head.current && !headResetDone.current) {
 
-            head.current.rotation.x = -0.2 + nod;  // X-axis = nod up/down
-            head.current.rotation.z = tilt; // Z-axis = tilt left/right
+                    // Capture starting rotation ONCE
+                    if (headTransitionTime.current === 0) {
+                        headStartRot.current = {
+                            x: head.current.rotation.x,
+                            y: head.current.rotation.y,
+                            z: head.current.rotation.z,
+                        };
+                    }
+
+                    headTransitionTime.current += delta;
+
+                    const duration = 0.8; // seconds
+                    const t = Math.min(headTransitionTime.current / duration, 1);
+                    const progress = smoothStep(t);
+
+                    head.current.rotation.x = lerp(headStartRot.current.x, -0.2, progress);
+                    head.current.rotation.y = lerp(headStartRot.current.y, 0, progress);
+                    head.current.rotation.z = lerp(headStartRot.current.z, 0, progress);
+
+                    if (t >= 1) {
+                        headResetDone.current = true;   // NEVER AGAIN
+                    }
+                }
+
+                if (leftEye.current.rotation.y !== 0) {
+                    leftEye.current.rotation.y = lerp(leftEye.current.rotation.y, 0, 0.1);
+                    rightEye.current.rotation.y = lerp(rightEye.current.rotation.y, 0, 0.1);
+                }
+
+                // ========================================
+                // ARM REPOSITIONING - Smooth transition to neutral
+                // ========================================
+                if (!armResetDone.current && rightArm.current && leftArm.current && rightForeArm.current && leftForeArm.current) {
+                    const smoothStep = (t) => t * t * (3 - 2 * t);
+
+                    // Capture starting rotations ONCE
+                    if (armTransitionTime.current === 0) {
+                        armStartRot.current = {
+                            rightArm: { x: rightArm.current.rotation.x, y: rightArm.current.rotation.y, z: rightArm.current.rotation.z },
+                            leftArm: { x: leftArm.current.rotation.x, y: leftArm.current.rotation.y, z: leftArm.current.rotation.z },
+                            rightForeArm: { x: rightForeArm.current.rotation.x, y: rightForeArm.current.rotation.y, z: rightForeArm.current.rotation.z },
+                            leftForeArm: { x: leftForeArm.current.rotation.x, y: leftForeArm.current.rotation.y, z: leftForeArm.current.rotation.z }
+                        };
+                    }
+
+                    armTransitionTime.current += delta;
+
+                    const duration = 0.8; // seconds
+                    const t = Math.min(armTransitionTime.current / duration, 1);
+                    const progress = smoothStep(t);
+
+                    // Transition to neutral position (handpos for x, 0 for y and z)
+                    rightArm.current.rotation.x = lerp(armStartRot.current.rightArm.x, handpos, progress);
+                    rightArm.current.rotation.y = lerp(armStartRot.current.rightArm.y, 0, progress);
+                    rightArm.current.rotation.z = lerp(armStartRot.current.rightArm.z, 0, progress);
+
+                    leftArm.current.rotation.x = lerp(armStartRot.current.leftArm.x, handpos, progress);
+                    leftArm.current.rotation.y = lerp(armStartRot.current.leftArm.y, 0, progress);
+                    leftArm.current.rotation.z = lerp(armStartRot.current.leftArm.z, 0, progress);
+
+                    rightForeArm.current.rotation.x = lerp(armStartRot.current.rightForeArm.x, 0, progress);
+                    rightForeArm.current.rotation.y = lerp(armStartRot.current.rightForeArm.y, 0, progress);
+                    rightForeArm.current.rotation.z = lerp(armStartRot.current.rightForeArm.z, 0, progress);
+
+                    leftForeArm.current.rotation.x = lerp(armStartRot.current.leftForeArm.x, 0, progress);
+                    leftForeArm.current.rotation.y = lerp(armStartRot.current.leftForeArm.y, 0, progress);
+                    leftForeArm.current.rotation.z = lerp(armStartRot.current.leftForeArm.z, 0, progress);
+
+                    if (t >= 1) {
+                        armResetDone.current = true; // Mark transition complete
+                    }
+                }
+
+                // Apply smile to mouthSmile morph target
+                if (hDict.mouthSmile !== undefined) {
+                    const currentValue = Number(hInfl[hDict.mouthSmile]) || 0;
+                    hInfl[hDict.mouthSmile] = clampMorphInfluence(lerp(currentValue, targetSmile, blendSpeed));
+
+                    // Debug log (only when value changes significantly)
+                    if (Math.abs(hInfl[hDict.mouthSmile] - targetSmile) > 0.01) {
+                        console.log("mouthSmile:", hInfl[hDict.mouthSmile].toFixed(3), "/ target:", targetSmile);
+                    }
+                } else {
+                    if (!window.mouthSmileWarned) {
+                        console.log("mouthSmile morph target NOT FOUND");
+                        window.mouthSmileWarned = true;
+                    }
+                }
+
+                // ========================================
+                // NATURAL IDLE ANIMATION - Both Arms
+                // ========================================
+                // Subtle, realistic movements that mimic natural breathing and idle behavior
+
+                // Multiple sine waves at different frequencies for natural variation
+                const breathingCycle = Math.sin(time.current * 0.5) * 0.03; // Slow breathing motion
+                const idleSway = Math.sin(time.current * 0.3) * 0.02; // Very slow sway
+
+                // RIGHT ARM - Natural idle movement
+                if (rightArm.current && rightForeArm.current && rightHand.current) {
+                    // Subtle shoulder movement (breathing)
+                    const rightShoulderBreath = Math.sin(time.current * 0.6) * 0.015;
+                    const rightShoulderSway = Math.sin(time.current * 0.4 + 0.5) * 0.01;
+
+                    // Gentle forearm movement
+                    const rightForearmFloat = Math.sin(time.current * 0.7 + 1) * 0.02;
+                    const rightForearmTwist = Math.sin(time.current * 0.35) * 0.01;
+
+                    rightArm.current.rotation.x = handpos + rightShoulderBreath;
+                    rightArm.current.rotation.z = rightShoulderSway;
+                    rightForeArm.current.rotation.x = rightForearmFloat;
+                    rightForeArm.current.rotation.y = rightForearmTwist;
+                    rightForeArm.current.rotation.z = breathingCycle * 0.5;
+                }
+
+                // LEFT ARM - Natural idle movement (slightly offset for asymmetry)
+                if (leftArm.current && leftForeArm.current && leftHand.current) {
+                    // Offset the timing slightly for more natural asymmetric movement
+                    const leftShoulderBreath = Math.sin(time.current * 0.6 + 0.3) * 0.015;
+                    const leftShoulderSway = Math.sin(time.current * 0.4 + 1.2) * 0.01;
+
+                    // Gentle forearm movement
+                    const leftForearmFloat = Math.sin(time.current * 0.65 + 0.8) * 0.02;
+                    const leftForearmTwist = Math.sin(time.current * 0.38 + 0.5) * 0.01;
+
+                    leftArm.current.rotation.x = handpos + leftShoulderBreath;
+                    leftArm.current.rotation.z = -leftShoulderSway; // Negative for opposite direction
+                    leftForeArm.current.rotation.x = leftForearmFloat;
+                    leftForeArm.current.rotation.y = -leftForearmTwist; // Negative for variation
+                    leftForeArm.current.rotation.z = -breathingCycle * 0.5; // Opposite breathing
+                }
+
+            }
+        }
+        else if (emotions?.toLowerCase() === "think") {
+            const smoothStep = (t) => t * t * (3 - 2 * t);
+            const lerp = (current, target, factor) => current + (target - current) * factor;
+            if (head.current && !headResetDone.current) {
+
+                // Capture starting rotation ONCE
+                if (headTransitionTime.current === 0) {
+                    headStartRot.current = {
+                        x: head.current.rotation.x,
+                        y: head.current.rotation.y,
+                        z: head.current.rotation.z,
+                    };
+                }
+
+                headTransitionTime.current += delta;
+
+                const duration = 0.8; // seconds
+                const t = Math.min(headTransitionTime.current / duration, 1);
+                const progress = smoothStep(t);
+
+                head.current.rotation.x = lerp(headStartRot.current.x, -0.2, progress);
+                head.current.rotation.y = lerp(headStartRot.current.y, 0, progress);
+                head.current.rotation.z = lerp(headStartRot.current.z, 0, progress);
+
+                if (t >= 1) {
+                    headResetDone.current = true;   // NEVER AGAIN
+                }
+            }
+            if (currentEmotion.eyeRoll && leftEye.current && rightEye.current) {
+                thinkingTime.current += delta;
+
+                const eyeRollCycle = 12;
+                const cycleTime = time.current % eyeRollCycle;
+
+                if (cycleTime < 2) {
+                    // Phase 1: Move eyes/head to the right (0 to 3 seconds)
+                    const progress = smoothStep(Math.min(cycleTime / 2, 1));
+                    const angle = progress * 0.2;
+                    leftEye.current.rotation.y = angle;
+                    rightEye.current.rotation.y = angle;
+                    head.current.rotation.y = angle;
+                    head.current.rotation.x = -0.2 - (angle * 1);
+                    head.current.rotation.z = angle;
+                } else if (cycleTime < 6) {
+                    // Phase 2: Nodding animation (2 to 6 seconds)
+                    const nodTime = cycleTime - 2; // Time within this phase (0 to 4 seconds)
+                    const nodCycle = 4; // 4 second per nod
+                    const nodProgress = (nodTime % nodCycle) / nodCycle; // 0 to 1 for each nod
+
+                    // Create smooth nodding motion using sine wave
+                    const nodAngle = Math.sin(nodProgress * Math.PI * 2) * 0.10; // Nod amplitude
+
+                    // Keep eyes and head Y at peak position
+                    leftEye.current.rotation.y = 0.2;
+                    rightEye.current.rotation.y = 0.2;
+                    head.current.rotation.y = 0.2;
+
+                    // Add nodding motion to X rotation
+                    head.current.rotation.x = -0.4 + nodAngle * 1;
+                    head.current.rotation.z = 0.2;
+                }
+                else if (cycleTime < 9) {
+                    // Phase 3: Return to center (6 to 9 seconds)
+                    const progress = smoothStep(Math.min((cycleTime - 6) / 3, 1));
+                    const angle = 0.2 * (1 - progress);
+                    leftEye.current.rotation.y = angle;
+                    rightEye.current.rotation.y = angle;
+                    head.current.rotation.y = angle;
+                    head.current.rotation.x = -0.2 - (angle * 1);
+                    head.current.rotation.z = angle;
+                } else {
+                    // Phase 4: Hold at center (9 to 12 seconds)
+                    leftEye.current.rotation.y = 0;
+                    rightEye.current.rotation.y = 0;
+                    head.current.rotation.y = 0;
+                    head.current.rotation.x = -0.2;
+                    head.current.rotation.z = 0;
+                }
+            } else if (leftEye.current && rightEye.current) {
+                // Reset eyes for other emotions
+                leftEye.current.rotation.y = 0;
+                rightEye.current.rotation.y = 0;
+            }
+        }
+        else if (emotions?.toLowerCase() === "listen") {
+            if (head.current) {
+                const lerp = (current, target, factor) => current + (target - current) * factor;
+                const smoothStep = (t) => t * t * (3 - 2 * t);
+                if (head.current && !headResetDone.current) {
+
+                    // Capture starting rotation ONCE
+                    if (headTransitionTime.current === 0) {
+                        headStartRot.current = {
+                            x: head.current.rotation.x,
+                            y: head.current.rotation.y,
+                            z: head.current.rotation.z,
+                        };
+                    }
+
+                    headTransitionTime.current += delta;
+
+                    const duration = 0.8; // seconds
+                    const t = Math.min(headTransitionTime.current / duration, 1);
+                    const progress = smoothStep(t);
+
+                    head.current.rotation.x = lerp(headStartRot.current.x, 0, progress);
+                    head.current.rotation.y = lerp(headStartRot.current.y, 0, progress);
+                    head.current.rotation.z = lerp(headStartRot.current.z, 0, progress);
+
+                    if (t >= 1) {
+                        headResetDone.current = true;   // NEVER AGAIN
+                    }
+                }
+                if (leftEye.current.rotation.y !== 0) {
+                    leftEye.current.rotation.y = lerp(leftEye.current.rotation.y, 0, 0.1);
+                    rightEye.current.rotation.y = lerp(rightEye.current.rotation.y, 0, 0.1);
+                }
+
+                // ========================================
+                // ARM REPOSITIONING - Smooth transition to neutral
+                // ========================================
+                if (!armResetDone.current && rightArm.current && leftArm.current && rightForeArm.current && leftForeArm.current) {
+                    const smoothStep = (t) => t * t * (3 - 2 * t);
+
+                    // Capture starting rotations ONCE
+                    if (armTransitionTime.current === 0) {
+                        armStartRot.current = {
+                            rightArm: { x: rightArm.current.rotation.x, y: rightArm.current.rotation.y, z: rightArm.current.rotation.z },
+                            leftArm: { x: leftArm.current.rotation.x, y: leftArm.current.rotation.y, z: leftArm.current.rotation.z },
+                            rightForeArm: { x: rightForeArm.current.rotation.x, y: rightForeArm.current.rotation.y, z: rightForeArm.current.rotation.z },
+                            leftForeArm: { x: leftForeArm.current.rotation.x, y: leftForeArm.current.rotation.y, z: leftForeArm.current.rotation.z }
+                        };
+                    }
+
+                    armTransitionTime.current += delta;
+
+                    const duration = 0.8; // seconds
+                    const t = Math.min(armTransitionTime.current / duration, 1);
+                    const progress = smoothStep(t);
+
+                    // Transition to neutral position (handpos for x, 0 for y and z)
+                    rightArm.current.rotation.x = lerp(armStartRot.current.rightArm.x, handpos, progress);
+                    rightArm.current.rotation.y = lerp(armStartRot.current.rightArm.y, 0, progress);
+                    rightArm.current.rotation.z = lerp(armStartRot.current.rightArm.z, 0, progress);
+
+                    leftArm.current.rotation.x = lerp(armStartRot.current.leftArm.x, handpos, progress);
+                    leftArm.current.rotation.y = lerp(armStartRot.current.leftArm.y, 0, progress);
+                    leftArm.current.rotation.z = lerp(armStartRot.current.leftArm.z, 0, progress);
+
+                    rightForeArm.current.rotation.x = lerp(armStartRot.current.rightForeArm.x, 0, progress);
+                    rightForeArm.current.rotation.y = lerp(armStartRot.current.rightForeArm.y, 0, progress);
+                    rightForeArm.current.rotation.z = lerp(armStartRot.current.rightForeArm.z, 0, progress);
+
+                    leftForeArm.current.rotation.x = lerp(armStartRot.current.leftForeArm.x, 0, progress);
+                    leftForeArm.current.rotation.y = lerp(armStartRot.current.leftForeArm.y, 0, progress);
+                    leftForeArm.current.rotation.z = lerp(armStartRot.current.leftForeArm.z, 0, progress);
+
+                    if (t >= 1) {
+                        armResetDone.current = true; // Mark transition complete
+                    }
+                }
+
+                const listenCycle = 6; // 2s nod + 3s pause
+                const cycleTime = time.current % listenCycle;
+
+                if (cycleTime < 3) {
+                    // Nodding phase (0 to 2 seconds)
+                    const nodSpeed = 2; // Speed of nodding
+                    const nodAmplitude = 0.05; // Gentle nod
+                    // Use sine wave for nodding, centered around a slightly tilted forward position (-0.1)
+                    head.current.rotation.x = -0.1 + Math.sin(cycleTime * Math.PI * nodSpeed) * nodAmplitude;
+                    head.current.rotation.y = 0;
+                    head.current.rotation.z = 0;
+                } else {
+                    // Pause phase (2 to 5 seconds) - hold neutral/slightly tilted
+                    // Smooth return to hold position if needed, or just hold
+                    const smoothStep = (t) => t * t * (3 - 2 * t);
+
+                    if (cycleTime < 2.5) {
+                        // Smoothly transition to hold (0.5s transition)
+                        const t = (cycleTime - 2) / 0.5;
+                        const progress = smoothStep(t);
+                        // Transition from last nod position to steady state
+                        // Actually, simpler to just lerp to steady state
+                        head.current.rotation.x = -0.1;
+                    } else {
+                        head.current.rotation.x = -0.1;
+                    }
+                    head.current.rotation.y = 0;
+                    head.current.rotation.z = 0;
+                }
+            }
         }
 
         // Update all skinned meshes
@@ -716,7 +1589,7 @@ function Avatar({ model, handpos, ischatting, text, audioFile, speakTrigger, onS
                 mesh.skeleton.update();
             }
         });
-    });
+    }, [emotions]);
 
     return (
         <group ref={groupRef}>

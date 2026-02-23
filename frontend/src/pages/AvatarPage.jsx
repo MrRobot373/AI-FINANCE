@@ -13,6 +13,7 @@ const Typewriter = ({ text, onComplete }) => {
     const [displayText, setDisplayText] = useState('');
     const [currentIndex, setCurrentIndex] = useState(0);
 
+
     useEffect(() => {
         if (!text) return;
 
@@ -35,6 +36,8 @@ const AvatarPage = () => {
     const [input, setInput] = useState('');
     const [speechText, setSpeechText] = useState(''); // Separate state for speech/lip sync
     const [ischatting, setIschatting] = useState(false)
+    const emotions = ["happy", "sad", "explain1", "explain2", "listen", "Think", "natural"]
+    const [currentEmotion, setCurrentEmotion] = useState("natural")
 
     useEffect(() => {
         setSection('avatar');
@@ -74,16 +77,41 @@ const AvatarPage = () => {
     useEffect(() => {
         // Check if loading just finished (went from true to false)
         if (prevIsLoading.current && !isLoading) {
+            console.log("🤖 AvatarPage: AI response finished (isLoading: true -> false)");
+
             // Get the last message
             if (messages.length > 0) {
                 const lastMsg = messages[messages.length - 1];
+                console.log("📩 Last message role:", lastMsg.role);
+
                 // Only speak if it's the assistant's message and we haven't spoken it yet
                 if (lastMsg.role === 'assistant') {
-                    const cleanText = lastMsg.content.replace(/```json[\s\S]*?```/g, '').trim();
+                    // Clean text for speech: remove code blocks, emojis, bullets, markdown, and extra spaces
+                    let cleanText = lastMsg.content.replace(/```json[\s\S]*?```/g, ''); // Remove JSON blocks
+
+                    // Remove Emojis (Range covering most common emojis)
+                    cleanText = cleanText.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1F018}-\u{1F270}\u{238C}-\u{2454}]/gu, '');
+
+                    // Remove Bullet Points and list markers (*, -, •, 1.)
+                    cleanText = cleanText.replace(/^\s*[\*\-•]\s+/gm, ''); // Remove bullet at start of line
+                    cleanText = cleanText.replace(/[\*\-•]/g, ''); // Remove inline bullets
+
+                    // Remove Markdown formatting (*bold*, _italic_, # headers)
+                    cleanText = cleanText.replace(/[\*#_`~]/g, ''); // Remove markdown chars
+
+                    // Remove Extra Spaces and Newlines
+                    cleanText = cleanText.replace(/\s+/g, ' ').trim();
+                    console.log("🗣️ Triggering speech for:", cleanText.substring(0, 50) + "...");
+
                     if (cleanText) {
                         setText(cleanText);
                         setShowLatestMessage(false); // Hide message initially
-                        setSpeakTrigger(prev => prev + 1);
+
+                        // Use timeout to ensure state updates before triggering
+                        setTimeout(() => {
+                            setSpeakTrigger(prev => prev + 1);
+                            console.log("🚀 Speak trigger incremented");
+                        }, 50);
                     }
                 }
             }
@@ -95,8 +123,7 @@ const AvatarPage = () => {
         setShowLatestMessage(true); // Show message when speech starts
     };
 
-    const [audioFile, setAudioFile] = useState(null); // State for uploaded audio
-    const fileInputRef = useRef(null);
+
 
     const handleSubmit = (e) => {
         e.preventDefault();
@@ -107,7 +134,7 @@ const AvatarPage = () => {
     };
 
     const handleSpeaking = () => {
-        if (!speechText.trim() && !audioFile) return;
+        if (!speechText.trim()) return;
         setCallavatar(true)
         setIschatting(true)
         setText(speechText)
@@ -154,28 +181,37 @@ const AvatarPage = () => {
                     <ambientLight intensity={0.6} />
                     <directionalLight position={[2, 2, 5]} intensity={2} />
                     <Avatar
-                        model={ismale ? '/models/Male.glb' : '/models/Female.glb'}
+                        model={ismale ? '/models/maleEyeShapeKeys.glb' : '/models/Female7.glb'}
                         handpos={ismale ? 1.3 : 1.15}
                         ischatting={ischatting}
+                        ismale={ismale}
                         text={text ? text : ""}
-                        audioFile={audioFile}
                         speakTrigger={speakTrigger}
                         onSpeechStart={handleSpeechStart}
+                        emotions={currentEmotion}
                     />
                     {/* Use this to rotate the model using mouse pointer */}
-                    {/* <OrbitControls /> */}
+                    <OrbitControls />
                 </Canvas>
 
                 {/* Speech Input Section - Independent from Chat */}
-                <div className='absolute flex flex-col items-center w-full gap-3 z-10 bottom-20 px-4'>
+                {/* <div className='absolute flex flex-col items-center w-full gap-3 z-10 bottom-20 px-4'>
                     <div className='w-full max-w-md bg-black/40 backdrop-blur-xl border border-emerald-500/30 rounded-2xl p-3 shadow-xl'>
                         <div className='flex items-center gap-2'>
+                            <select
+                                value={currentEmotion}
+                                onChange={(e) => setCurrentEmotion(e.target.value)}
+                                className="bg-black/50 text-white border border-emerald-500/30 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                            >
+                                {emotions.map((name) => (
+                                    <option key={name} value={name}>{name}</option>
+                                ))}
+                            </select>
                             <input
                                 type="text"
                                 value={speechText}
                                 onChange={(e) => {
                                     setSpeechText(e.target.value);
-                                    if (audioFile) setAudioFile(null); // Clear audio file if user types
                                 }}
                                 onKeyPress={(e) => {
                                     if (e.key === 'Enter' && speechText.trim()) {
@@ -196,9 +232,8 @@ const AvatarPage = () => {
                                 <Speech size={18} />
                             </button>
                         </div>
-                        {/* <p className='text-xs text-gray-400 mt-2 text-center'>Speech input (independent from chat)</p> */}
                     </div>
-                </div>
+                </div> */}
 
                 <div className='absolute flex justify-center w-full gap-10 z-10 bottom-4 border-t pt-4 border-white/10'>
                     <div className='bg-emerald-500 rounded-full w-fit p-3'
@@ -214,10 +249,10 @@ const AvatarPage = () => {
                     Chat Button
                     remove this button after integrating the voice feature this was added just to test the zoom effect 
                     */}
-                    <div className='bg-emerald-500 rounded-full p-3'
+                    {/* <div className='bg-emerald-500 rounded-full p-3'
                         onClick={() => setIschatting(!ischatting)}>
                         <MessageSquare size={20} />
-                    </div>
+                    </div> */}
                 </div>
             </div>
             {/* Chat Component*/}
@@ -240,7 +275,6 @@ const AvatarPage = () => {
                             <p className="text-sm text-gray-400 font-light max-w-md mb-12">
                                 Start your request, and let FinWise handle everything
                             </p>
-
                             {/* Centered Input Form */}
                             <div className="w-full max-w-2xl">
                                 <form onSubmit={handleSubmit} className='w-full'>
@@ -351,7 +385,6 @@ const AvatarPage = () => {
                                                 value={input}
                                                 onChange={(e) => {
                                                     setInput(e.target.value)
-                                                    setText(e.target.value)
                                                 }}
                                                 placeholder="Start your request, and let FinWise handle everything"
                                                 className="w-full bg-transparent border-none text-white placeholder-gray-500 py-3 focus:outline-none text-sm"

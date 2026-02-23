@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
+from sqlalchemy import desc
 from typing import List, Optional
 import uuid
 import csv
@@ -23,7 +24,7 @@ def create_transaction(transaction: TransactionCreate, db: Session = Depends(get
 
 @router.get("/", response_model=List[Transaction])
 def read_transactions(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    transactions = db.query(TransactionModel).offset(skip).limit(limit).all()
+    transactions = db.query(TransactionModel).order_by(desc(TransactionModel.date)).offset(skip).limit(limit).all()
     return transactions
 
 @router.get("/{transaction_id}", response_model=Transaction)

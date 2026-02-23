@@ -6,6 +6,8 @@ const CategoryModal = ({ isOpen, onClose, onCategorySaved, categoryToEdit = null
     const [name, setName] = useState('');
     const [isIncome, setIsIncome] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [errexisting, seterrexisting] = useState(false)
+
 
     useEffect(() => {
         if (isOpen) {
@@ -33,7 +35,7 @@ const CategoryModal = ({ isOpen, onClose, onCategorySaved, categoryToEdit = null
             onCategorySaved();
             onClose();
         } catch (error) {
-            console.error("Failed to save category", error);
+            seterrexisting(true)
         } finally {
             setLoading(false);
         }
@@ -81,7 +83,7 @@ const CategoryModal = ({ isOpen, onClose, onCategorySaved, categoryToEdit = null
                             />
                         </button>
                     </div>
-
+                    {errexisting && <p className="text-red-500 text-sm text-center">Category already exists</p>}
                     <button
                         type="submit"
                         disabled={loading}

@@ -54,7 +54,7 @@ class TrainingJobResponse(BaseModel):
     error_message: Optional[str]
 
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 class ModelInfo(BaseModel):
     id: str

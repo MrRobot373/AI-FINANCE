@@ -108,7 +108,7 @@ export const speakText = (text, options = {}) => {
         utterance.voice = options.voice || selectedVoice;
 
         // Set speech parameters
-        utterance.rate = options.rate || 1.0;    // Speed (0.1 to 10)
+        utterance.rate = options.rate || 0.1;    // Speed (0.1 to 10) - slowed down to 0.8
         utterance.pitch = options.pitch || 1.0;  // Pitch (0 to 2)
         utterance.volume = options.volume || 1.0; // Volume (0 to 1)
 

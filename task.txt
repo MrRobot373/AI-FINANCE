@@ -1,2 +1,17 @@
-improving lip shapes 
-we can change mapping of IPA and visemes to get better results
+added new shape keys for mouth shapes 
+check them out and then pply those for the visemes
+
+head shape keys -
+mouthTH
+mouthO
+mouthSZTD
+mouthFV
+mouthWide
+mouthCHJSH
+
+teeth shape keys -
+teethO
+teethTH
+teethWide
+
+file name - maleEyeShapeKeys2.glb

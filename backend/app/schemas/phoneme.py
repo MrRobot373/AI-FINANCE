@@ -8,11 +8,13 @@ class PhonemeRequest(BaseModel):
     language: str = 'en-us'
 
 
+
 class VisemeFrame(BaseModel):
-    """Single viseme frame with timing information"""
+    """Single viseme frame with timing information and shape keys"""
     viseme: str
     start: float
     duration: float
+    shape_keys: dict = {}  # Optional shape keys for this viseme
 
 
 class PhonemeResponse(BaseModel):

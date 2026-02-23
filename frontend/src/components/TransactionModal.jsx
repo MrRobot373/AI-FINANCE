@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useSyncExternalStore } from 'react';
 import { X, Plus, Loader2 } from 'lucide-react';
 import { getCategories, createCategory, createTransaction, updateTransaction } from '../services/api';
+import { formatDateForInput } from '../utils/dateUtils';
 
 const TransactionModal = ({ isOpen, onClose, onTransactionAdded, transactionToEdit = null }) => {
     const [categories, setCategories] = useState([]);
@@ -12,10 +13,12 @@ const TransactionModal = ({ isOpen, onClose, onTransactionAdded, transactionToEd
     const [description, setDescription] = useState('');
     const [categoryId, setCategoryId] = useState('');
     const [defaultCategory, setDefaultCategory] = useState('');
-    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+    const [date, setDate] = useState(formatDateForInput(new Date()));
     const [newCategoryName, setNewCategoryName] = useState('');
     const [type, setType] = useState('expense');
     const [filteredCategories, setFilteredCategories] = useState([]);
+    const today = new Date().toISOString().split('T')[0];
+    
 
     useEffect(() => {
         if (type === "expense") {
@@ -34,7 +37,7 @@ const TransactionModal = ({ isOpen, onClose, onTransactionAdded, transactionToEd
                 setAmount(Math.abs(transactionToEdit.amount).toString());
                 setDescription(transactionToEdit.description);
                 setCategoryId(transactionToEdit.category_id);
-                setDate(new Date(transactionToEdit.date).toISOString().split('T')[0]);
+                setDate(formatDateForInput(transactionToEdit.date));
                 setType(transactionToEdit.amount > 0 ? 'income' : 'expense');
             } else {
                 // Reset for new
@@ -42,7 +45,7 @@ const TransactionModal = ({ isOpen, onClose, onTransactionAdded, transactionToEd
                 setDescription('');
                 setDefaultCategory('');
                 setCategoryId(defaultCategory.id);
-                setDate(new Date().toISOString().split('T')[0]);
+                setDate(formatDateForInput(new Date()));
                 setType('expense');
             }
         }
@@ -174,8 +177,9 @@ const TransactionModal = ({ isOpen, onClose, onTransactionAdded, transactionToEd
                         <input
                             type="date"
                             value={date}
+                            max={today}
                             onChange={(e) => setDate(e.target.value)}
-                            className="w-full bg-dark-bg border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-primary/50 text-white"
+                            className="w-full date-icon-white bg-dark-bg border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-primary/50 text-white"
                             required
                         />
                     </div>

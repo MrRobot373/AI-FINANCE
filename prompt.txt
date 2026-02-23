@@ -1,0 +1,150 @@
+I have a React (React Three Fiber) + FastAPI project for real-time lip sync.
+
+I want to implement the FINAL production-ready lip sync pipeline described below.
+
+Do NOT redesign architecture.
+Do NOT add extra libraries.
+Only implement exactly what is described.
+
+🔵 BACKEND (FastAPI + Allosaurus)
+1. Load Allosaurus ONLY ON SERVER START
+
+Use FastAPI startup event.
+
+from fastapi import FastAPI
+from allosaurus.app import read_recognizer
+
+app = FastAPI()
+model = None
+
+@app.on_event("startup")
+def load_model():
+    global model
+    model = read_recognizer("eng")
+
+
+Model must NEVER load inside request handlers.
+
+2. Phoneme Extraction Endpoint
+
+Create:
+
+@app.post("/phonemes")
+def get_phonemes(audio_path: str):
+    phonemes = model.recognize(audio_path)
+    return phonemes
+
+3. PHONEME → VISEME MAPPING (ARPABET)
+
+Use exactly this mapping:
+
+B, P, M → CLOSED
+
+AA, AE, AH, AO, AW, AY, EH, ER, EY, IH, IY, OW, OY, UH, UW → OPEN
+
+IY, IH, EY, AY, Y, JH → WIDE
+
+OW, UW, W → ROUND
+
+F, V → FV
+
+T, D, DH, TH, S, Z, SH, ZH, CH → TONGUE
+
+K, G, R, N, NG, L, HH → OPEN (fallback)
+
+
+Convert phoneme output into:
+
+{ "viseme": string, "start": float, "end": float }
+
+
+Then perform viseme merging:
+
+Merge consecutive identical visemes
+
+Remove segments shorter than 0.04s
+
+Optional: shift start time -0.04s for visual anticipation (clamp ≥ 0)
+
+4. Viseme Merging
+
+Rules:
+
+Merge consecutive identical visemes.
+
+Remove segments shorter than 0.04 seconds.
+
+Optional: shift start time 0.04s earlier for visual anticipation (clamp >= 0).
+
+Example merge logic:
+
+def merge_visemes(items):
+    merged = []
+    for v in items:
+        if merged and merged[-1]["viseme"] == v["viseme"]:
+            merged[-1]["end"] = v["end"]
+        else:
+            merged.append(v)
+
+    MIN_DURATION = 0.04
+    return [
+        seg for seg in merged
+        if seg["end"] - seg["start"] >= MIN_DURATION
+    ]
+
+
+Final endpoint must return merged viseme timeline.
+
+🟣 FRONTEND (React Three Fiber)
+
+DO NOT redesign frontend.
+
+Frontend already:
+
+Plays audio
+
+Uses audio.currentTime as master clock
+
+Computes audio RMS energy per frame
+
+Smooths energy
+
+Blends shape keys using lerp
+
+Runtime Logic
+
+Each frame:
+
+const t = audio.currentTime + 0.04;
+const viseme = getVisemeAtTime(t);
+const energy = getEnergyAtTime(t);
+
+
+Apply:
+
+Viseme → lip shape keys
+
+Energy → jaw openness
+
+Smooth blending
+
+🔥 OUTPUT EXPECTATIONS
+
+Provide:
+
+Complete FastAPI backend code
+
+Phoneme → viseme conversion function
+
+Merge function
+
+Final endpoint returning merged viseme segments
+
+Example response JSON
+
+No explanations.
+No suggestions.
+No architecture redesign.
+Only clean production-ready implementation.
+
+End.

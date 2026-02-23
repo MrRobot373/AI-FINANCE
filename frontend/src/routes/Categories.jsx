@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { getCategories, deleteCategory } from '../services/api';
-import { Trash2, Edit2, Plus, Search } from 'lucide-react';
+import { Trash2, Edit2, Plus, Search, UtensilsCrossed } from 'lucide-react';
 import CategoryModal from '../components/CategoryModal';
 
 const Categories = () => {

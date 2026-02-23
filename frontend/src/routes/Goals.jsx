@@ -22,9 +22,10 @@ const Goals = () => {
     const [contributeAmount, setContributeAmount] = useState('');
     const [contributeCategoryId, setContributeCategoryId] = useState('c1e5e519-7107-4a6c-aa86-1bc5f1a516e4');
     const [amountExceed, setAmountExceed] = useState(false)
-
+    const today = new Date().toISOString().split("T")[0]
     useEffect(() => {
         fetchData();
+
     }, []);
 
     const fetchData = async () => {
@@ -51,12 +52,24 @@ const Goals = () => {
         e.preventDefault();
         setSubmitting(true);
         try {
+            if (parseFloat(targetAmount) < parseFloat(currentAmount)) {
+                setAmountExceed(true);
+                return;
+            }
+            setAmountExceed(false);
             await createGoal({
                 name,
                 target_amount: parseFloat(targetAmount),
                 current_amount: parseFloat(currentAmount) || 0,
                 deadline: deadline ? new Date(deadline).toISOString() : null
             });
+            await createTransaction({
+                amount: -Math.abs(parseFloat(currentAmount)), // Negative for expense
+                description: `Contribution to ${name}`,
+                date: new Date().toISOString(),
+                category_id: contributeCategoryId
+            });
+
             setIsModalOpen(false);
             fetchData();
             // Reset
@@ -64,10 +77,12 @@ const Goals = () => {
             setTargetAmount('');
             setCurrentAmount('');
             setDeadline('');
+
         } catch (error) {
             console.error("Failed to create goal", error);
         } finally {
             setSubmitting(false);
+            setAmountExceed(false);
         }
     };
 
@@ -201,7 +216,7 @@ const Goals = () => {
             {isModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
                     <div className="bg-card-bg border border-white/10 rounded-2xl w-full max-w-md p-6 relative shadow-2xl">
-                        <h3 className="text-xl font-bold mb-4">New Goal</h3>
+                        <h3 className="text-xl font-bold mb-4 text-emerald-500">New Goal</h3>
                         <form onSubmit={handleSubmit} className="space-y-4">
                             <input
                                 type="text"
@@ -229,14 +244,21 @@ const Goals = () => {
                             <input
                                 type="date"
                                 value={deadline}
+                                min={today}
                                 onChange={e => setDeadline(e.target.value)}
-                                className="w-full bg-dark-bg border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-primary/50 text-white"
+                                className="w-full date-icon-white bg-dark-bg border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-primary/50 text-white"
                             />
+                            <div>
+                                {amountExceed && <p className="text-red-500 text-sm text-center">Current Amount should not be more than Target Amount</p>}
+                            </div>
                             <div className="flex gap-3 mt-6">
                                 <button
                                     type="button"
-                                    onClick={() => setIsModalOpen(false)}
-                                    className="flex-1 py-3 rounded-xl border border-white/10 hover:bg-white/5 transition-colors"
+                                    onClick={() => {
+                                        setIsModalOpen(false)
+                                        setAmountExceed(false)
+                                    }}
+                                    className="flex-1 text-white py-3 rounded-xl border border-white/10 hover:bg-white/5 transition-colors"
                                 >
                                     Cancel
                                 </button>

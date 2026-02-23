@@ -44,9 +44,18 @@ const Dashboard = () => {
     if (timeFilter === 'Day') {
       return txDate.toDateString() === now.toDateString();
     } else if (timeFilter === 'Week') {
-      const oneWeekAgo = new Date();
-      oneWeekAgo.setDate(now.getDate() - 7);
-      return txDate >= oneWeekAgo;
+      const startOfWeek = new Date(now);
+      const day = now.getDay(); // 0 (Sunday) to 6 (Saturday)
+      // Go back to the preceding Sunday
+      startOfWeek.setDate(now.getDate() - day);
+      startOfWeek.setHours(0, 0, 0, 0);
+
+      const endOfWeek = new Date(startOfWeek);
+      // Go forward to the following Saturday
+      endOfWeek.setDate(startOfWeek.getDate() + 6);
+      endOfWeek.setHours(23, 59, 59, 999);
+
+      return txDate >= startOfWeek && txDate <= endOfWeek;
     } else { // Month
       return txDate.getMonth() === now.getMonth() && txDate.getFullYear() === now.getFullYear();
     }

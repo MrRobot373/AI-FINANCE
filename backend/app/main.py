@@ -14,6 +14,13 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Finance AI API", version="1.0")
 
+# Load Allosaurus model on startup
+@app.on_event("startup")
+def startup_event():
+    """Load ML models on server start"""
+    from app.services.allosaurus_service import load_allosaurus_model
+    load_allosaurus_model()
+
 from fastapi.staticfiles import StaticFiles
 
 # --- Middleware ---

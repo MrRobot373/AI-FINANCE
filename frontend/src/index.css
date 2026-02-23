@@ -35,3 +35,13 @@
     /* Chrome, Safari & Edge */
   }
 }
+
+@layer utilities {
+  .date-icon-white::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+  }
+
+  .date-icon-red::-webkit-calendar-picker-indicator {
+    filter: invert(27%) sepia(95%) saturate(7475%) hue-rotate(356deg) brightness(97%) contrast(119%);
+  }
+}

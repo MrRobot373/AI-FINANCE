@@ -407,10 +407,12 @@ export function textToVisemes(text) {
 /**
  * Get morph target values for a specific viseme
  * Maps viseme types to morph target influences
+ * Now supports optional shapeKeys object from backend for precise control
  * @param {string} viseme - Viseme type
+ * @param {Object} [shapeKeys] - Optional precise shape keys from backend
  * @returns {Object} Morph target values
  */
-export function getVisemeMorphTargets(viseme) {
+export function getVisemeMorphTargets(viseme, shapeKeys = null) {
     const morphTargets = {
         mouthOpen: 0,
         mouthSmile: 0,
@@ -419,6 +421,52 @@ export function getVisemeMorphTargets(viseme) {
         jawOpen: 0
     };
 
+    // PLAN A: Use precise shape keys from backend if available
+    if (shapeKeys && shapeKeys.lips) {
+        // Map custom refined shape keys to Standard RPM/ARKit Morph Targets
+
+        // 1. Mouth Opening
+        if (shapeKeys.lips.Lips_Open_Wide) {
+            morphTargets.mouthOpen = shapeKeys.lips.Lips_Open_Wide;
+            morphTargets.jawOpen = shapeKeys.lips.Lips_Open_Wide * 0.8;
+        }
+
+        // 2. Wide / Smile
+        if (shapeKeys.lips.Lips_Wide) {
+            // Lips_Wide corresponds to mouthSmile or mouthUpperUp type movement
+            morphTargets.mouthSmile = shapeKeys.lips.Lips_Wide;
+        }
+
+        // 3. Round / Pucker
+        if (shapeKeys.lips.Lips_Round) {
+            morphTargets.mouthPucker = shapeKeys.lips.Lips_Round;
+        }
+        if (shapeKeys.lips.Lips_Purse_Narrow) {
+            morphTargets.mouthPucker = Math.max(morphTargets.mouthPucker, shapeKeys.lips.Lips_Purse_Narrow);
+        }
+
+        // 4. Funnel / Protrude
+        if (shapeKeys.lips.Lips_Protude) {
+            morphTargets.mouthFunnel = shapeKeys.lips.Lips_Protude;
+        }
+
+        // 5. FV (Labiodental) - approximations
+        if (shapeKeys.lips.Lips_FV) {
+            // Approximation for F/V sound
+            morphTargets.mouthOpen = 0.2;
+            morphTargets.jawOpen = 0.1;
+            // Ideally we'd use viseme_FF if available, but restricting to 5 core shapes
+        }
+
+        // 6. Corner Up (Simulate with smile)
+        if (shapeKeys.lips.Lips_Corner_Up) {
+            morphTargets.mouthSmile = Math.max(morphTargets.mouthSmile, shapeKeys.lips.Lips_Corner_Up);
+        }
+
+        return morphTargets;
+    }
+
+    // PLAN B: Fallback to Standard Oculus Viseme Logic
     switch (viseme) {
         case 'sil':
             // Neutral/closed mouth
@@ -507,6 +555,8 @@ export function getVisemeMorphTargets(viseme) {
             break;
 
         default:
+            // Fallback for unknown visemes (e.g. ARPABET codes effectively fall through here if no shape keys)
+            // But usually we should have shape keys if we have ARPABET
             morphTargets.mouthOpen = 0.3;
     }
 
@@ -570,44 +620,7 @@ export async function textToVisemesAPI(text, language = 'en-us') {
 }
 
 
-/**
- * Get visemes from backend Audio API service
- * Uses Allosaurus for precise audio-driven lip sync
- * 
- * @param {Blob} audioBlob - Audio file blob (WAV/MP3)
- * @returns {Promise<Array>} Viseme sequence from backend
- */
-export async function audioToVisemesAPI(audioBlob) {
-    // API URL for audio
-    const AUDIO_API_URL = 'http://localhost:8000/api/v1/phoneme/audio-to-visemes';
 
-    try {
-        const formData = new FormData();
-        formData.append('file', audioBlob, 'speech.wav');
-
-        console.log('📤 Sending audio to backend for lip sync processing...');
-
-        const response = await fetch(AUDIO_API_URL, {
-            method: 'POST',
-            body: formData,
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`API returned ${response.status}: ${errorText}`);
-        }
-
-        const visemes = await response.json();
-
-        console.log('✅ Audio processed successfully');
-        console.log('Viseme count:', visemes.length);
-
-        return visemes;
-    } catch (error) {
-        console.error('❌ Audio lip sync error:', error.message);
-        return [];
-    }
-}
 
 /**
  * Get visemes AND audio URL from backend TTS service

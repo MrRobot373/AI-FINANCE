@@ -74,7 +74,7 @@ const Transactions = () => {
                 ? tx.amount > 0
                 : tx.amount < 0;
         return matchesSearch && matchesFilter;
-    });
+    }).sort((a, b) => new Date(b.date) - new Date(a.date));
 
     if (loading) {
         return (
