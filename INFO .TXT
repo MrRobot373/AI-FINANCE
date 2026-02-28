@@ -1,4 +1,0 @@
-Designed an AI Finance Avatar capable of real-time stock market analysis and personalized financial insights using RAG (Retrieval-Augmented Generation).
-Integrated speech-to-text (STT) and text-to-speech (TTS) for interactive voice-based communication.
-Developed an intelligent expense tracker for automated budgeting and spending insights.
-Built using AI, NLP, and financial data APIs to deliver adaptive, conversational financial assistance.
