@@ -5,7 +5,11 @@ import sys
 sys.path.append('.')
 
 from app.db.database import Base, engine
-from app.models.chat import ChatSession, ChatMessage
+from app.models.chat import (
+    RAGChatSession, RAGChatMessage,
+    AvatarChatSession, AvatarChatMessage,
+    DashboardChatSession, DashboardChatMessage
+)
 
 # Import other models to ensure they're registered
 from app.models.transaction import Transaction

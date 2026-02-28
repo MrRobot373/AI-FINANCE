@@ -6,6 +6,7 @@ class PhonemeRequest(BaseModel):
     """Request model for text-to-phoneme conversion"""
     text: str
     language: str = 'en-us'
+    gender: str = 'male'
 
 
 

@@ -84,8 +84,9 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
     /**
      * Start speaking
      * @param {string} text - Text to speak
+     * @param {boolean} isMale - Whether to use the male voice
      */
-    const speak = useCallback(async (text) => {
+    const speak = useCallback(async (text, isMale = true) => {
         speechId.current++;
         const currentId = speechId.current;
 
@@ -107,7 +108,7 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
         setIsPlaying(false);
 
         try {
-            const data = await textToAudioVisemesAPI(speechText);
+            const data = await textToAudioVisemesAPI(speechText, isMale);
 
             if (currentId !== speechId.current) return;
 

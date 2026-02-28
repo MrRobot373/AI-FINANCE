@@ -10,18 +10,18 @@ def load_allosaurus_model():
     """Load Allosaurus model on server startup"""
     global _allosaurus_model
     if _allosaurus_model is None:
-        print("🔄 Loading Allosaurus model...")
+        print("[INFO] Loading Allosaurus model...")
         try:
             # Try to load existing model
             _allosaurus_model = read_recognizer("eng2102")
-            print("✅ Allosaurus model loaded")
+            print("[OK] Allosaurus model loaded")
         except (AssertionError, FileNotFoundError):
             # Model doesn't exist, need to download
-            print("📥 Downloading Allosaurus model (first time only)...")
+            print("[INFO] Downloading Allosaurus model (first time only)...")
             from allosaurus.bin.download_model import download_model
             download_model("eng2102")
             _allosaurus_model = read_recognizer("eng2102")
-            print("✅ Allosaurus model downloaded and loaded")
+            print("[OK] Allosaurus model downloaded and loaded")
     return _allosaurus_model
 
 def get_phonemes_from_audio(audio_path: str) -> list:

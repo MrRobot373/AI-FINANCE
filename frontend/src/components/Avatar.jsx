@@ -7,7 +7,13 @@ import { speakText, stopSpeaking } from "../utils/ttsUtils";
 import { useLipSync } from "../hooks/useLipSync";
 import { clampMorphInfluence } from "../utils/morphUtils";
 
-function Avatar({ model, handpos, ischatting, text, speakTrigger, onSpeechStart, emotions, ismale }) {
+function Avatar({ model, handpos, ischatting, text,
+    speakTrigger,
+    onSpeechStart,
+    onSpeechEnd,
+    emotions = "neutral",
+    ismale
+}) {
     const { scene } = useGLTF(model);
     const groupRef = useRef();
     const avtargroup = useRef()
@@ -225,7 +231,7 @@ function Avatar({ model, handpos, ischatting, text, speakTrigger, onSpeechStart,
     // VISEME LIP SYNC STATE (NEW SYSTEM)
     // ============================================
     // Hook handles audio playback, timeline, and frame updates
-    const { speak, stop: stopLipSync, isPlaying: isLipSyncing } = useLipSync(headMesh, teethMesh, onSpeechStart);
+    const { speak, stop: stopLipSync, isPlaying: isLipSyncing } = useLipSync(headMesh, teethMesh, onSpeechStart, onSpeechEnd);
 
     // Legacy flags maintained for compatibility with other effects
     const [isPlayingVisemes, setIsPlayingVisemes] = useState(false);
@@ -465,13 +471,13 @@ function Avatar({ model, handpos, ischatting, text, speakTrigger, onSpeechStart,
     useEffect(() => {
         if (speakTrigger > 0 && text && text.trim() !== '') {
             console.log(`🗣️ Avatar Component: Received speak trigger #${speakTrigger} for text:`, text.substring(0, 30) + "...");
-            speak(text);
+            speak(text, ismale);
         }
 
         return () => {
             stopLipSync();
         };
-    }, [speakTrigger, text, speak, stopLipSync]);
+    }, [speakTrigger, text, speak, stopLipSync, ismale]);
 
     // Stop lip sync and audio when text is cleared
     useEffect(() => {

@@ -626,9 +626,10 @@ export async function textToVisemesAPI(text, language = 'en-us') {
  * Get visemes AND audio URL from backend TTS service
  * 
  * @param {string} text - Text to convert
+ * @param {boolean} isMale - Whether the male voice should be used
  * @returns {Promise<{audio_url: string, visemes: Array}>} 
  */
-export async function textToAudioVisemesAPI(text) {
+export async function textToAudioVisemesAPI(text, isMale = true) {
     const TTS_API_URL = 'http://localhost:8000/api/v1/phoneme/tts-to-visemes';
 
     try {
@@ -639,7 +640,10 @@ export async function textToAudioVisemesAPI(text) {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ text })
+            body: JSON.stringify({
+                text,
+                gender: isMale ? 'male' : 'female'
+            })
         });
 
         if (!response.ok) {

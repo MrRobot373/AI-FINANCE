@@ -119,8 +119,11 @@ async def convert_tts_to_visemes(request: PhonemeRequest, req: Request = None):
         # Cleanup old files occasionally
         cleanup_old_files()
 
+        # Select voice based on gender
+        voice_id = "en-US-ChristopherNeural" if getattr(request, 'gender', 'male') == 'male' else "en-US-JennyNeural"
+        
         # Generate audio (mp3)
-        audio_path = await generate_speech(request.text)
+        audio_path = await generate_speech(request.text, voice=voice_id)
         
         # Process TEXT to visemes (Direct LOGIOS approach)
         # Generate both regular visemes (for backward compatibility) and grouped visemes (NEW)

@@ -5,6 +5,8 @@ from pydantic import BaseModel
 from typing import List, Optional
 import json
 import uuid
+import sys
+import os
 
 from app.db.database import get_db
 from app.services.ai_service import AIService
@@ -126,3 +128,151 @@ async def chat(session_id: str, request: ChatRequest, section: str = Query("rag"
             yield f"data: {{\"error\": \"{str(e)}\"}}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# --- Knowledge Base / RAG Admin ---
+
+from fastapi import UploadFile, File
+import os
+import tempfile
+from app.services.rag_service import RagService
+
+rag_service = RagService()
+
+@router.post("/knowledge/upload")
+async def upload_knowledge_file(file: UploadFile = File(...)):
+    """Upload a PDF or TXT file to the Chroma vector store."""
+    try:
+        # Validate file type
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in ['.pdf', '.txt']:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid file format. Supported: .pdf, .txt"
+            )
+        
+        # Save temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as temp_file:
+            content = await file.read()
+            temp_file.write(content)
+            temp_path = temp_file.name
+            
+        try:
+            # Extract text
+            extracted_text = rag_service.extract_text_from_file(temp_path, file_ext)
+            
+            if not extracted_text.strip():
+                raise HTTPException(status_code=400, detail="Could not extract text from the file.")
+                
+            # Embed and store
+            result = rag_service.ingest_document(extracted_text, file.filename)
+            
+            if result.get("status") == "skipped":
+                return {"message": f"File '{file.filename}' already exists in knowledge base.", "skipped": True}
+                
+            return {"message": "File embedded successfully", "details": result}
+            
+        finally:
+            # Clean up temp file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+                
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/knowledge/files")
+def get_knowledge_files():
+    """Get a list of all files embedded in the Chroma vector store."""
+    try:
+        files = rag_service.get_stored_files()
+        # Formatted specifically to match TrainingMonitor frontend needs:
+        formatted = [{"id": f, "name": f, "status": "embedded", "progress": 100} for f in files]
+        return formatted
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/knowledge/files/{file_id}")
+def delete_knowledge_file(file_id: str):
+    """Delete a file's embeddings from the database. Here file_id is the filename"""
+    try:
+        success = rag_service.delete_embedding_by_file_name(file_id)
+        if success:
+            return {"message": f"Embeddings for {file_id} deleted successfully."}
+        else:
+            raise HTTPException(status_code=404, detail="File not found or deletion failed.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Voice / Speech-to-Text ---
+
+@router.post("/voice")
+async def voice_to_text(audio: UploadFile = File(...)):
+    """
+    Accept an audio file, transcribe it using Whisper, and return the text.
+    Used by the Avatar page for speech-to-speech conversations.
+    """
+    try:
+        from app.services.speech_service import SpeechService
+        speech_service = SpeechService()
+        
+        audio_bytes = await audio.read()
+        
+        if len(audio_bytes) < 100:
+            raise HTTPException(status_code=400, detail="Audio file is too small or empty.")
+        
+        text = speech_service.transcribe(audio_bytes)
+        
+        if not text or not text.strip():
+            return {"text": "", "message": "No speech detected in the audio."}
+        
+        return {"text": text.strip()}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
+# Add speech_to_speech to path so we can import vad_record
+try:
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    finwise_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))))
+    speech_dir = os.path.join(finwise_dir, "speech_to_speech")
+    if os.path.exists(speech_dir) and speech_dir not in sys.path:
+        sys.path.append(speech_dir)
+except Exception:
+    pass
+
+@router.post("/voice/record_vad")
+async def record_voice_with_vad():
+    """
+    Triggers the backend microphone to listen via Silero VAD until silence, 
+    then transcribes the resulting audio file.
+    """
+    try:
+        from app.services.speech_service import SpeechService
+        try:
+            from vad_record import record_with_vad
+        except ImportError:
+            raise HTTPException(status_code=500, detail="Could not import vad_record from speech_to_speech folder.")
+        
+        # 1. Record audio using the backend Silero VAD script
+        print("🎙️ Starting VAD recording from backend...")
+        audio_file_path = record_with_vad()
+        
+        if not audio_file_path or not os.path.exists(audio_file_path):
+            return {"text": "", "message": "Recording failed or no audio."}
+            
+        # 2. Transcribe using our existing Whisper service
+        with open(audio_file_path, "rb") as f:
+            audio_bytes = f.read()
+            
+        speech_service = SpeechService()
+        text = speech_service.transcribe(audio_bytes)
+        print(f"✅ Transcribed: {text}")
+        
+        if not text or not text.strip():
+            return {"text": "", "message": "No speech detected in the audio."}
+        
+        return {"text": text.strip()}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"VAD Recording failed: {str(e)}")
+

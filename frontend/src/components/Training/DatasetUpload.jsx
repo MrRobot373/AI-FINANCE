@@ -37,34 +37,46 @@ const DatasetUpload = ({ onUploadComplete, uploadedFile, setUploadedFile }) => {
 
     const handleFile = async (file) => {
         // Validate file type
-        const validExtensions = ['.json', '.jsonl', '.csv'];
+        const validExtensions = ['.pdf', '.txt'];
         const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
 
         if (!validExtensions.includes(fileExtension)) {
-            setError('Invalid file format. Please upload .json, .jsonl, or .csv files.');
+            setError('Invalid file format. Please upload .pdf or .txt files.');
             return;
         }
 
         setError(null);
         setUploading(true);
 
-        setError(null);
-        setUploading(true);
-
         try {
-            // Mock backend call
-            // const { uploadDataset } = await import('../../services/training');
-            // const result = await uploadDataset(file);
+            const formData = new FormData();
+            formData.append('file', file);
 
-            // Simulate network delay
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            const token = localStorage.getItem('token');
+            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+            // In a real app we'd use an api service, but using fetch here works too
+            const response = await fetch(`${apiUrl}/ai/knowledge/upload`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
+                body: formData
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || 'Failed to upload file');
+            }
+
+            const data = await response.json();
 
             const result = {
                 filename: file.name,
-                filepath: `/mock/path/${file.name}`,
+                filepath: `/knowledge/${file.name}`,
                 validation: {
-                    format: fileExtension.substring(1), // remove dot
-                    sample_count: 1000 // mock count
+                    format: fileExtension.substring(1),
+                    sample_count: data.skipped ? "Already Exists" : "New Document"
                 }
             };
 
@@ -79,7 +91,7 @@ const DatasetUpload = ({ onUploadComplete, uploadedFile, setUploadedFile }) => {
                 onUploadComplete(result);
             }
         } catch (err) {
-            setError(err.response?.data?.detail || 'Failed to upload file');
+            setError(err.message || 'Failed to upload file');
         } finally {
             setUploading(false);
         }
@@ -106,7 +118,7 @@ const DatasetUpload = ({ onUploadComplete, uploadedFile, setUploadedFile }) => {
                 >
                     <input
                         type="file"
-                        accept=".json,.jsonl,.csv"
+                        accept=".pdf,.txt"
                         onChange={handleFileInput}
                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                         disabled={uploading}
@@ -120,7 +132,7 @@ const DatasetUpload = ({ onUploadComplete, uploadedFile, setUploadedFile }) => {
 
                         <div>
                             <p className="text-lg font-medium text-white mb-1">
-                                {uploading ? 'Uploading...' : 'Drop your dataset here'}
+                                {uploading ? 'Processing embeddings... This may take a few minutes' : 'Drop your dataset here'}
                             </p>
                             <p className="text-sm text-gray-400">
                                 or click to browse • Supports .json, .jsonl, .csv

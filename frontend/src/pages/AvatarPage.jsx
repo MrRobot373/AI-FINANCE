@@ -53,6 +53,51 @@ const AvatarPage = () => {
     const [showLatestMessage, setShowLatestMessage] = useState(false); // Controls visibility of last msg
     const nav = useNavigate()
 
+    // --- Voice Recording State ---
+    const [isRecording, setIsRecording] = useState(false);
+    const mediaRecorderRef = useRef(null);
+    const audioChunksRef = useRef([]);
+    const [isTranscribing, setIsTranscribing] = useState(false);
+
+    const handleMicToggle = async () => {
+        if (isRecording || isTranscribing) return;
+
+        setIsRecording(true);
+        setIsTranscribing(true);
+        setInput('Listening... (Speak into your computer mic)');
+
+        try {
+            const token = import.meta.env.VITE_API_TOKEN || localStorage.getItem('token');
+            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+
+            const response = await fetch(`${API_URL}/ai/voice/record_vad`, {
+                method: 'POST',
+                headers: {
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                }
+            });
+
+            if (!response.ok) throw new Error(`Server returned ${response.status}`);
+
+            const data = await response.json();
+
+            if (data.text) {
+                setInput('');
+                setIschatting(true);
+                sendMessage(data.text);
+            } else {
+                console.log("No speech transcribed:", data.message);
+                setInput('');
+            }
+        } catch (err) {
+            console.error("Error transcribing voice:", err);
+            setInput('');
+        } finally {
+            setIsRecording(false);
+            setIsTranscribing(false);
+        }
+    };
+
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     };
@@ -119,8 +164,21 @@ const AvatarPage = () => {
         prevIsLoading.current = isLoading;
     }, [isLoading, messages]);
 
+    useEffect(() => {
+        if (isRecording) {
+            setCurrentEmotion("listen");
+        } else if (isLoading || isTranscribing) {
+            setCurrentEmotion("think");
+        }
+    }, [isRecording, isLoading, isTranscribing]);
+
     const handleSpeechStart = () => {
         setShowLatestMessage(true); // Show message when speech starts
+        setCurrentEmotion(Math.random() > 0.5 ? "explain1" : "explain2");
+    };
+
+    const handleSpeechEnd = () => {
+        setCurrentEmotion("natural");
     };
 
 
@@ -188,6 +246,7 @@ const AvatarPage = () => {
                         text={text ? text : ""}
                         speakTrigger={speakTrigger}
                         onSpeechStart={handleSpeechStart}
+                        onSpeechEnd={handleSpeechEnd}
                         emotions={currentEmotion}
                     />
                     {/* Use this to rotate the model using mouse pointer */}
@@ -236,9 +295,12 @@ const AvatarPage = () => {
                 </div> */}
 
                 <div className='absolute flex justify-center w-full gap-10 z-10 bottom-4 border-t pt-4 border-white/10'>
-                    <div className='bg-emerald-500 rounded-full w-fit p-3'
-                        onClick={() => setIsmicon(!ismicon)}>
-                        {!ismicon ? <MicOff size={20} /> : <Mic size={20} />}
+                    <div
+                        className={`rounded-full w-fit p-3 cursor-pointer transition-all duration-300 ${isRecording ? 'bg-red-500 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'bg-emerald-500'}`}
+                        onClick={handleMicToggle}
+                        title={isRecording ? "Stop Recording" : "Start Voice Input"}
+                    >
+                        {isRecording ? <Mic size={20} className="text-white" /> : <MicOff size={20} className="text-white" />}
                     </div>
                     <div className='bg-emerald-500 rounded-full p-3'
                         onClick={() => setIssoundon(!issoundon)}>
@@ -289,19 +351,19 @@ const AvatarPage = () => {
                                                 }}
                                                 placeholder="Start your request, and let FinWise handle everything"
                                                 className="w-full bg-transparent border-none text-white placeholder-gray-500 py-3 focus:outline-none text-sm"
-                                                disabled={isLoading}
+                                                disabled={isLoading || isTranscribing || isRecording}
                                             />
                                         </div>
 
                                         <button
                                             type="submit"
-                                            disabled={!input.trim() || isLoading}
-                                            className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${input.trim() && !isLoading
+                                            disabled={!input.trim() || isLoading || isTranscribing || isRecording}
+                                            className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${(input.trim() || isTranscribing) && !isLoading && !isRecording
                                                 ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:scale-105'
                                                 : 'bg-white/5 text-gray-600 cursor-not-allowed border border-white/10'
                                                 }`}
                                         >
-                                            {isLoading ? (
+                                            {isLoading || isTranscribing ? (
                                                 <>
                                                     <Loader2 className="animate-spin" size={16} />
                                                 </>
@@ -388,7 +450,7 @@ const AvatarPage = () => {
                                                 }}
                                                 placeholder="Start your request, and let FinWise handle everything"
                                                 className="w-full bg-transparent border-none text-white placeholder-gray-500 py-3 focus:outline-none text-sm"
-                                                disabled={isLoading}
+                                                disabled={isLoading || isTranscribing || isRecording}
                                             />
                                         </div>
 
@@ -396,13 +458,13 @@ const AvatarPage = () => {
                                         <div className="flex items-center gap-2 pr-2">
                                             <button
                                                 type="submit"
-                                                disabled={!input.trim() || isLoading}
-                                                className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${input.trim() && !isLoading
+                                                disabled={!input.trim() || isLoading || isTranscribing || isRecording}
+                                                className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${(input.trim() || isTranscribing) && !isLoading && !isRecording
                                                     ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:scale-105'
                                                     : 'bg-white/5 text-gray-600 cursor-not-allowed border border-white/10'
                                                     }`}
                                             >
-                                                {isLoading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+                                                {isLoading || isTranscribing ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
                                             </button>
                                         </div>
                                     </div>
