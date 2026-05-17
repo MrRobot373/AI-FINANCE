@@ -9,7 +9,7 @@ from app.models.category import Category
 
 class AIService:
     def __init__(self):
-        self.model = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+        self.model = os.getenv("OLLAMA_MODEL", "gemma3:4b")
 
     def build_context(self, db: Session, section: str = "dashboard") -> str:
         # Avatar section uses a voice-friendly prompt (no markdown, no emoji)
@@ -145,7 +145,7 @@ Remember: Respond as if you are speaking directly to someone. Short, natural, cl
             # Use RagService for RAG section
             from app.services.rag_service import RagService
             rag_service = RagService()
-            response = rag_service.process_chat_query(prompt)
+            response = rag_service.process_chat_query(prompt, history=history)
             # Simulate streaming for the frontend
             import time
             for word in response.split(" "):

@@ -1,13 +1,14 @@
 import axios from 'axios';
+import { getApiBaseUrl } from '../utils/apiBase';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+const apiBaseUrl = getApiBaseUrl();
 
 // Dataset Upload
 export const uploadDataset = async (file) => {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await axios.post(`${API_URL}/train/upload-dataset`, formData, {
+    const response = await axios.post(`${apiBaseUrl}/train/upload-dataset`, formData, {
         headers: {
             'Content-Type': 'multipart/form-data',
         },

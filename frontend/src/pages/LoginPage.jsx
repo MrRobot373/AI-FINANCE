@@ -12,8 +12,7 @@ const LoginPage = () => {
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
-    // Hardcoded password for personal use
-    const CORRECT_PASSWORD = 'ruai2024';
+    const CORRECT_PASSWORD = import.meta.env.VITE_LOGIN_PASSWORD || 'finwise2026';
 
     const handleSubmit = (e) => {
         e.preventDefault();
@@ -94,7 +93,7 @@ const LoginPage = () => {
                                     type={showPassword ? 'text' : 'password'}
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    placeholder="ruai2024"
+                                    placeholder="Enter password"
                                     className="w-full pl-12 pr-12 py-4 bg-white/5 border border-white/10 rounded-xl text-white placeholder:text-gray-500 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 transition-all"
                                 />
                                 <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">
@@ -137,12 +136,6 @@ const LoginPage = () => {
                     <div className="text-center text-white text-xs mt-4">
                         By Logging in I accept the <span onClick={() => navigate('/terms-of-service')} className='text-emerald-500 hover:text-emerald-400 px-1 cursor-pointer'>Terms of Service</span> and <span onClick={() => navigate('/privacy-policy')} className='text-emerald-500 hover:text-emerald-400 px-1 cursor-pointer'>Privacy Policy</span>
                     </div>
-                    {/* Hint */}
-                    {/* <div className="mt-6 text-center">
-                        <p className="text-xs text-gray-500">
-                            Hint: The password is <span className="text-emerald-400/60">ruai2024</span>
-                        </p>
-                    </div> */}
                 </div>
 
                 {/* Decorative Elements */}

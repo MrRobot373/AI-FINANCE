@@ -1,12 +1,12 @@
 import React, { useCallback } from 'react';
 import { useState } from 'react';
 import { Upload, FileText, CheckCircle, AlertCircle } from 'lucide-react';
+import { getApiBaseUrl } from '../../utils/apiBase';
 
 const DatasetUpload = ({ onUploadComplete, uploadedFile, setUploadedFile }) => {
     const [isDragging, setIsDragging] = React.useState(false);
     const [uploading, setUploading] = useState(false)
     const [error, setError] = useState("")
-
 
     const handleDragOver = useCallback((e) => {
         e.preventDefault();
@@ -53,7 +53,7 @@ const DatasetUpload = ({ onUploadComplete, uploadedFile, setUploadedFile }) => {
             formData.append('file', file);
 
             const token = localStorage.getItem('token');
-            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+            const apiUrl = getApiBaseUrl();
 
             // In a real app we'd use an api service, but using fetch here works too
             const response = await fetch(`${apiUrl}/ai/knowledge/upload`, {
@@ -135,7 +135,7 @@ const DatasetUpload = ({ onUploadComplete, uploadedFile, setUploadedFile }) => {
                                 {uploading ? 'Processing embeddings... This may take a few minutes' : 'Drop your dataset here'}
                             </p>
                             <p className="text-sm text-gray-400">
-                                or click to browse • Supports .json, .jsonl, .csv
+                                or click to browse • Supports .pdf and .txt
                             </p>
                         </div>
                     </div>

@@ -4,6 +4,7 @@ import { useChatStore } from '../../store/useChatStore';
 import ChatSidebar from './ChatSidebar';
 import FloatingNav from '../FloatingNav';
 import { useNavigate } from 'react-router-dom';
+import MessageContent, { LoadingDots } from '../../utils/messageFormatting.jsx';
 
 const ChatInterface = () => {
     const { messages = [], isLoading, sendMessage, currentSessionId, setSection } = useChatStore();
@@ -17,6 +18,9 @@ const ChatInterface = () => {
     const [isAdmin, setIsAdmin] = useState(localStorage.getItem('isAdmin'))
     const messagesEndRef = useRef(null);
     const nav = useNavigate()
+    const hasPendingAssistant = isLoading
+        && messages[messages.length - 1]?.role === 'assistant'
+        && !messages[messages.length - 1]?.content?.trim();
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -171,9 +175,7 @@ const ChatInterface = () => {
                                                 ? 'bg-emerald-500/10 text-white border border-emerald-500/20 backdrop-blur-md'
                                                 : 'bg-white/5 text-gray-200 border border-white/10 backdrop-blur-md'
                                                 }`}>
-                                                <p className="whitespace-pre-wrap leading-relaxed text-[15px]">
-                                                    {msg.content.replace(/```json[\s\S]*?```/g, '').trim()}
-                                                </p>
+                                                <MessageContent content={msg.content} className="text-[15px]" />
                                             </div>
 
                                             {msg.role === 'user' && (
@@ -184,15 +186,13 @@ const ChatInterface = () => {
                                         </div>
                                     ))}
 
-                                    {isLoading && (
+                                    {isLoading && !hasPendingAssistant && (
                                         <div className="flex gap-4 justify-start">
                                             <div className="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-500/20 to-green-600/20 border border-emerald-500/30 flex items-center justify-center shrink-0 mt-1 backdrop-blur-sm">
                                                 <Bot size={18} className="text-emerald-400" />
                                             </div>
                                             <div className="bg-white/5 border border-white/10 rounded-2xl backdrop-blur-md px-5 py-4 flex items-center gap-2">
-                                                <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                                <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                                                <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                                <LoadingDots />
                                             </div>
                                         </div>
                                     )}

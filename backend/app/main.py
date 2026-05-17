@@ -4,22 +4,26 @@ import os
 from dotenv import load_dotenv
 import yfinance as yf
 
-from app.api.v1.routes import categories, transactions, goals, recurring, ai, train, phoneme
-from app.db.database import engine, Base
-
 load_dotenv()
+
+from app.api.v1.routes import categories, transactions, goals, recurring, ai, train, phoneme, realtime_voice
+from app.db.database import engine, Base
 
 # This will create the tables in the database
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Finance AI API", version="1.0")
 
-# Load Allosaurus model on startup
 @app.on_event("startup")
 def startup_event():
-    """Load ML models on server start"""
-    from app.services.allosaurus_service import load_allosaurus_model
-    load_allosaurus_model()
+    """Prepare runtime data on server start."""
+    from app.db.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        categories.ensure_default_categories(db)
+    finally:
+        db.close()
 
 from fastapi.staticfiles import StaticFiles
 
@@ -46,6 +50,7 @@ api_v1_router.include_router(recurring.router, prefix="/recurring", tags=["Recur
 api_v1_router.include_router(ai.router, prefix="/ai", tags=["AI"])
 api_v1_router.include_router(train.router, prefix="/train", tags=["Training"])
 api_v1_router.include_router(phoneme.router, prefix="/phoneme", tags=["Phoneme"])
+api_v1_router.include_router(realtime_voice.router, prefix="/avatar", tags=["Avatar Realtime"])
 
 app.include_router(api_v1_router, prefix="/api/v1")
 

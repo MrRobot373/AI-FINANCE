@@ -14,24 +14,48 @@ from app.schemas.training import (
     TrainingConfig
 )
 from app.services.training_service import TrainingService
+from app.services.rag_service import RagService
 
 router = APIRouter()
 training_service = TrainingService()
+rag_service = RagService()
 
 @router.post("/upload-dataset")
 async def upload_dataset(file: UploadFile = File(...)):
     """Upload a training dataset file"""
     try:
         # Validate file type
-        if not file.filename.endswith(('.json', '.jsonl', '.csv')):
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in {'.pdf', '.txt', '.json', '.jsonl', '.csv'}:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid file format. Supported: .json, .jsonl, .csv"
+                detail="Invalid file format. Supported: .pdf, .txt, .json, .jsonl, .csv"
             )
         
         # Read and save file
         content = await file.read()
         filepath = training_service.save_dataset(content, file.filename)
+
+        if file_ext in {'.pdf', '.txt'}:
+            extracted_text = rag_service.extract_text_from_file(filepath, file_ext)
+
+            if not extracted_text.strip():
+                os.remove(filepath)
+                raise HTTPException(status_code=400, detail="Could not extract text from the file.")
+
+            embed_result = rag_service.ingest_document(extracted_text, file.filename)
+
+            return {
+                "filepath": filepath,
+                "filename": file.filename,
+                "validation": {
+                    "valid": True,
+                    "format": file_ext.lstrip("."),
+                    "sample_count": embed_result.get("chunks", "Already Exists" if embed_result.get("status") == "skipped" else "Document"),
+                    "sample_preview": extracted_text[:250]
+                },
+                "embedding": embed_result
+            }
         
         # Validate dataset
         validation = training_service.validate_dataset(filepath)

@@ -1,5 +1,6 @@
 fastapi
 uvicorn[standard]
+python-multipart
 sqlalchemy
 alembic
 psycopg2-binary
@@ -16,6 +17,8 @@ yfinance
 edge-tts
 gTTS
 ffmpeg-python
+imageio-ffmpeg
+piper-tts
 # G2P: app uses g2p-arpabet when available, else g2p_en (same ARPABET API)
 g2p_en
 g2p-arpabet
@@ -30,4 +33,5 @@ chromadb==0.6.0
 PyPDF2==3.0.1
 duckduckgo-search==7.5.0
 openai-whisper
+faster-whisper
 soundfile

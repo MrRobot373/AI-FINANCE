@@ -122,8 +122,10 @@ async def convert_tts_to_visemes(request: PhonemeRequest, req: Request = None):
         # Select voice based on gender
         voice_id = "en-US-ChristopherNeural" if getattr(request, 'gender', 'male') == 'male' else "en-US-JennyNeural"
         
-        # Generate audio (mp3)
-        audio_path = await generate_speech(request.text, voice=voice_id)
+        gender = getattr(request, 'gender', 'male')
+
+        # Generate local Piper audio first, with network TTS only as a fallback.
+        audio_path = await generate_speech(request.text, voice=voice_id, gender=gender)
         
         # Process TEXT to visemes (Direct LOGIOS approach)
         # Generate both regular visemes (for backward compatibility) and grouped visemes (NEW)
@@ -143,7 +145,7 @@ async def convert_tts_to_visemes(request: PhonemeRequest, req: Request = None):
         }
         
     except Exception as e:
-        print(f"❌ Error in tts-to-visemes: {e}")
+        print(f"Error in tts-to-visemes: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to process TTS: {str(e)}"
@@ -208,7 +210,7 @@ async def extract_phonemes_from_audio(file: UploadFile = File(...)):
                 os.unlink(tmp_path)
                 
     except Exception as e:
-        print(f"❌ Error in phoneme extraction: {e}")
+        print(f"Error in phoneme extraction: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(

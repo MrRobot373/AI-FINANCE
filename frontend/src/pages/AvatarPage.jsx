@@ -8,6 +8,10 @@ import { Canvas } from '@react-three/fiber'
 import Avatar from '../components/Avatar';
 import { OrbitControls } from '@react-three/drei';
 import VenomBlob from '../components/VenomBlob';
+import MessageContent, { LoadingDots } from '../utils/messageFormatting.jsx';
+import { cleanMessageText } from '../utils/messageText.js';
+import { apiUrl } from '../utils/apiBase';
+import { useRealtimeVoice } from '../hooks/useRealtimeVoice';
 
 const Typewriter = ({ text, onComplete }) => {
     const [displayText, setDisplayText] = useState('');
@@ -31,8 +35,82 @@ const Typewriter = ({ text, onComplete }) => {
     return <p className="whitespace-pre-wrap leading-relaxed text-[15px]">{displayText}</p>;
 };
 
+const sanitizeSpeechText = (value = '') => {
+    return String(value)
+        .replace(/```[\s\S]*?```/g, '')
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/https?:\/\/\S+/g, ' ')
+        .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}]/gu, '')
+        .replace(/^\s*[\*\-\u2022]\s+/gm, '')
+        .replace(/[\*#_`~]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+};
+
+const takeSpeakableSegments = (fullText, consumedLength, force = false) => {
+    const pending = fullText.slice(consumedLength);
+    if (!pending.trim()) return { segments: [], consumed: 0 };
+
+    const maxSegmentLength = 260;
+    const segments = [];
+    let consumed = 0;
+    const sentenceRegex = /[.!?](?=\s|$)/g;
+    let match;
+
+    while ((match = sentenceRegex.exec(pending)) !== null) {
+        let end = match.index + 1;
+        while (pending[end] === ' ') end += 1;
+
+        const sentence = pending.slice(consumed, end).trim();
+        if (sentence) {
+            segments.push(sentence);
+        }
+        consumed = end;
+    }
+
+    if (force && consumed < pending.length) {
+        const rest = pending.slice(consumed).trim();
+        if (rest) {
+            segments.push(rest);
+            consumed = pending.length;
+        }
+    }
+
+    const normalizedSegments = [];
+    for (const segment of segments) {
+        if (segment.length <= maxSegmentLength) {
+            normalizedSegments.push(segment);
+            continue;
+        }
+
+        let remaining = segment;
+        while (remaining.length > maxSegmentLength) {
+            const splitAt = Math.max(
+                remaining.lastIndexOf(',', maxSegmentLength),
+                remaining.lastIndexOf(';', maxSegmentLength),
+                remaining.lastIndexOf(' ', maxSegmentLength)
+            );
+            const index = splitAt > 60 ? splitAt : maxSegmentLength;
+            normalizedSegments.push(remaining.slice(0, index).trim());
+            remaining = remaining.slice(index).trim();
+        }
+        if (remaining) normalizedSegments.push(remaining);
+    }
+
+    return { segments: normalizedSegments, consumed };
+};
+
 const AvatarPage = () => {
-    const { messages = [], isLoading, sendMessage, currentSessionId, setSection } = useChatStore();
+    const {
+        messages = [],
+        isLoading,
+        sendMessage,
+        currentSessionId,
+        setSection,
+        addMessage,
+        startAssistantMessage,
+        appendAssistantDelta
+    } = useChatStore();
     const [input, setInput] = useState('');
     const [speechText, setSpeechText] = useState(''); // Separate state for speech/lip sync
     const [ischatting, setIschatting] = useState(false)
@@ -48,6 +126,9 @@ const AvatarPage = () => {
     const [ismicon, setIsmicon] = useState(true)
     const [reloadKey, setReloadKey] = useState(0)
     const [text, setText] = useState("")
+    const [speechPayload, setSpeechPayload] = useState(null)
+    const [speechPayloadTrigger, setSpeechPayloadTrigger] = useState(0)
+    const [stopSpeechTrigger, setStopSpeechTrigger] = useState(0)
     const [callavatar, setCallavatar] = useState(false)
     const [speakTrigger, setSpeakTrigger] = useState(0)
     const [showLatestMessage, setShowLatestMessage] = useState(false); // Controls visibility of last msg
@@ -57,24 +138,231 @@ const AvatarPage = () => {
     const [isRecording, setIsRecording] = useState(false);
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
+    const recordingStreamRef = useRef(null);
     const [isTranscribing, setIsTranscribing] = useState(false);
+    const [voiceModeActive, setVoiceModeActive] = useState(false);
+    const [isAvatarSpeaking, setIsAvatarSpeaking] = useState(false);
+    const audioContextRef = useRef(null);
+    const analyserRef = useRef(null);
+    const vadFrameRef = useRef(null);
+    const speechDetectedRef = useRef(false);
+    const silenceStartedAtRef = useRef(null);
+    const recordingStartedAtRef = useRef(0);
+    const discardRecordingRef = useRef(false);
+    const speechQueueRef = useRef([]);
+    const speechPayloadQueueRef = useRef([]);
+    const speechBusyRef = useRef(false);
+    const spokenCleanLengthRef = useRef(0);
+    const activeAssistantIndexRef = useRef(-1);
+    const isLoadingRef = useRef(false);
+    const soundOnRef = useRef(true);
+    const voiceModeActiveRef = useRef(false);
 
-    const handleMicToggle = async () => {
-        if (isRecording || isTranscribing) return;
+    useEffect(() => {
+        isLoadingRef.current = isLoading;
+    }, [isLoading]);
 
-        setIsRecording(true);
+    useEffect(() => {
+        soundOnRef.current = issoundon;
+    }, [issoundon]);
+
+    useEffect(() => {
+        voiceModeActiveRef.current = voiceModeActive;
+    }, [voiceModeActive]);
+
+    const playNextSpeechPayload = () => {
+        if (!soundOnRef.current) return;
+
+        const nextPayload = speechPayloadQueueRef.current.shift();
+        if (!nextPayload) {
+            speechBusyRef.current = false;
+            return;
+        }
+
+        speechBusyRef.current = true;
+        setSpeechPayload(nextPayload);
+        setShowLatestMessage(true);
+        setSpeechPayloadTrigger(prev => prev + 1);
+    };
+
+    const stopCurrentAvatarSpeech = () => {
+        speechQueueRef.current = [];
+        speechPayloadQueueRef.current = [];
+        speechBusyRef.current = false;
+        setText('');
+        setSpeechPayload(null);
+        setIsAvatarSpeaking(false);
+        setShowLatestMessage(true);
+        setCurrentEmotion("listen");
+        setStopSpeechTrigger(prev => prev + 1);
+    };
+
+    const realtimeVoice = useRealtimeVoice({
+        gender: ismale ? 'male' : 'female',
+        isAssistantSpeaking: isAvatarSpeaking || speechBusyRef.current,
+        onFinalTranscript: (transcript) => {
+            if (!transcript?.trim()) return;
+            setInput('');
+            setIschatting(true);
+            addMessage({ role: 'user', content: transcript, created_at: new Date().toISOString() });
+        },
+        onAssistantStart: () => {
+            setIschatting(true);
+            setShowLatestMessage(false);
+            startAssistantMessage();
+        },
+        onAssistantDelta: (delta) => {
+            appendAssistantDelta(delta);
+        },
+        onSpeechChunk: (chunk) => {
+            speechPayloadQueueRef.current.push(chunk);
+            if (!speechBusyRef.current && soundOnRef.current) {
+                playNextSpeechPayload();
+            }
+        },
+        onAssistantDone: () => {
+            setShowLatestMessage(true);
+        },
+        onBargeIn: stopCurrentAvatarSpeech,
+        onError: (message) => {
+            console.error('Realtime voice error:', message);
+            setInput('');
+        },
+    });
+
+    useEffect(() => {
+        if (!realtimeVoice.active) return;
+
+        const labels = {
+            connected: 'Connected...',
+            listening: 'Listening...',
+            speech_detected: 'Listening...',
+            transcribing: 'Transcribing...',
+            thinking: 'Thinking...',
+            synthesizing: 'Preparing voice...',
+            idle: '',
+            disconnected: '',
+        };
+        setInput(labels[realtimeVoice.status] ?? '');
+    }, [realtimeVoice.active, realtimeVoice.status]);
+
+    useEffect(() => {
+        if (!realtimeVoice.active) return;
+        if (realtimeVoice.recording || isAvatarSpeaking || speechBusyRef.current || isLoading) return;
+        if (['transcribing', 'thinking', 'synthesizing', 'speech_detected'].includes(realtimeVoice.status)) return;
+
+        const timer = setTimeout(() => {
+            if (!speechBusyRef.current) {
+                realtimeVoice.startRecording();
+            }
+        }, 450);
+
+        return () => clearTimeout(timer);
+    }, [realtimeVoice, realtimeVoice.active, realtimeVoice.recording, realtimeVoice.status, isAvatarSpeaking, isLoading]);
+
+    const getSupportedAudioMimeType = () => {
+        if (!window.MediaRecorder) return '';
+        const candidates = [
+            'audio/webm;codecs=opus',
+            'audio/webm',
+            'audio/ogg;codecs=opus',
+            'audio/mp4',
+        ];
+        return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+    };
+
+    const cleanupRecordingStream = () => {
+        if (vadFrameRef.current) {
+            cancelAnimationFrame(vadFrameRef.current);
+            vadFrameRef.current = null;
+        }
+        if (audioContextRef.current) {
+            audioContextRef.current.close().catch(() => { });
+            audioContextRef.current = null;
+        }
+        analyserRef.current = null;
+        recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
+        recordingStreamRef.current = null;
+    };
+
+    const startVadMonitor = (stream) => {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
+
+        const audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 1024;
+        source.connect(analyser);
+
+        audioContextRef.current = audioContext;
+        analyserRef.current = analyser;
+        speechDetectedRef.current = false;
+        silenceStartedAtRef.current = null;
+        recordingStartedAtRef.current = performance.now();
+
+        const samples = new Uint8Array(analyser.fftSize);
+        const speechThreshold = 0.028;
+        const silenceMs = 850;
+        const minRecordingMs = 500;
+        const maxRecordingMs = 15000;
+
+        const tick = () => {
+            if (mediaRecorderRef.current?.state !== 'recording') return;
+
+            analyser.getByteTimeDomainData(samples);
+            let sum = 0;
+            for (let i = 0; i < samples.length; i++) {
+                const normalized = (samples[i] - 128) / 128;
+                sum += normalized * normalized;
+            }
+
+            const rms = Math.sqrt(sum / samples.length);
+            const now = performance.now();
+            const elapsed = now - recordingStartedAtRef.current;
+
+            if (rms > speechThreshold) {
+                speechDetectedRef.current = true;
+                silenceStartedAtRef.current = null;
+                setInput('Listening...');
+            } else if (speechDetectedRef.current) {
+                if (!silenceStartedAtRef.current) {
+                    silenceStartedAtRef.current = now;
+                }
+
+                if (elapsed > minRecordingMs && now - silenceStartedAtRef.current > silenceMs) {
+                    stopRecording();
+                    return;
+                }
+            }
+
+            if (elapsed > maxRecordingMs) {
+                stopRecording();
+                return;
+            }
+
+            vadFrameRef.current = requestAnimationFrame(tick);
+        };
+
+        vadFrameRef.current = requestAnimationFrame(tick);
+    };
+
+    const sendRecordedAudio = async (blob) => {
         setIsTranscribing(true);
-        setInput('Listening... (Speak into your computer mic)');
+        setInput('Transcribing...');
 
         try {
             const token = import.meta.env.VITE_API_TOKEN || localStorage.getItem('token');
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+            const formData = new FormData();
+            const extension = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('mp4') ? 'm4a' : 'webm';
+            formData.append('audio', blob, `voice-input.${extension}`);
 
-            const response = await fetch(`${API_URL}/ai/voice/record_vad`, {
+            const response = await fetch(apiUrl('/ai/voice'), {
                 method: 'POST',
                 headers: {
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                }
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: formData,
             });
 
             if (!response.ok) throw new Error(`Server returned ${response.status}`);
@@ -86,17 +374,116 @@ const AvatarPage = () => {
                 setIschatting(true);
                 sendMessage(data.text);
             } else {
-                console.log("No speech transcribed:", data.message);
+                console.log('No speech transcribed:', data.message);
                 setInput('');
+                setVoiceModeActive(false);
             }
         } catch (err) {
-            console.error("Error transcribing voice:", err);
+            console.error('Error transcribing voice:', err);
             setInput('');
+            setVoiceModeActive(false);
         } finally {
-            setIsRecording(false);
             setIsTranscribing(false);
         }
     };
+
+    const stopRecording = (discard = false) => {
+        discardRecordingRef.current = discard;
+        if (mediaRecorderRef.current?.state === 'recording') {
+            setInput(discard ? '' : 'Transcribing...');
+            mediaRecorderRef.current.stop();
+        }
+    };
+
+    const startRecording = async () => {
+        if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+            console.error('Browser voice recording is not supported.');
+            setInput('');
+            return;
+        }
+
+        if (isLoadingRef.current || speechBusyRef.current || isAvatarSpeaking) {
+            return;
+        }
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                },
+            });
+            recordingStreamRef.current = stream;
+            audioChunksRef.current = [];
+            discardRecordingRef.current = false;
+
+            const mimeType = getSupportedAudioMimeType();
+            const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+            recorder.ondataavailable = (event) => {
+                if (event.data?.size > 0) {
+                    audioChunksRef.current.push(event.data);
+                }
+            };
+
+            recorder.onstop = async () => {
+                const blob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' });
+                const shouldDiscard = discardRecordingRef.current;
+                const heardSpeech = speechDetectedRef.current;
+                cleanupRecordingStream();
+                mediaRecorderRef.current = null;
+                setIsRecording(false);
+
+                if (shouldDiscard) {
+                    setInput('');
+                    return;
+                }
+
+                if (!heardSpeech || blob.size < 100) {
+                    setInput('');
+                    setVoiceModeActive(false);
+                    return;
+                }
+
+                await sendRecordedAudio(blob);
+            };
+
+            mediaRecorderRef.current = recorder;
+            recorder.start(250);
+            startVadMonitor(stream);
+            setIsRecording(true);
+            setInput('Listening...');
+        } catch (err) {
+            cleanupRecordingStream();
+            setIsRecording(false);
+            setInput('');
+            console.error('Could not start voice recording:', err);
+        }
+    };
+
+    const handleMicToggle = async () => {
+        if (realtimeVoice.active) {
+            realtimeVoice.stop();
+            stopCurrentAvatarSpeech();
+            return;
+        }
+
+        await realtimeVoice.start();
+    };
+
+    useEffect(() => {
+        if (!voiceModeActive) return;
+        if (isRecording || isTranscribing || isLoading || isAvatarSpeaking || speechBusyRef.current) return;
+
+        const timer = setTimeout(() => {
+            if (voiceModeActiveRef.current) {
+                startRecording();
+            }
+        }, 450);
+
+        return () => clearTimeout(timer);
+    }, [voiceModeActive, isRecording, isTranscribing, isLoading, isAvatarSpeaking]);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -121,7 +508,7 @@ const AvatarPage = () => {
 
     useEffect(() => {
         // Check if loading just finished (went from true to false)
-        if (prevIsLoading.current && !isLoading) {
+        if (false && prevIsLoading.current && !isLoading) {
             console.log("🤖 AvatarPage: AI response finished (isLoading: true -> false)");
 
             // Get the last message
@@ -149,36 +536,111 @@ const AvatarPage = () => {
                     console.log("🗣️ Triggering speech for:", cleanText.substring(0, 50) + "...");
 
                     if (cleanText) {
-                        setText(cleanText);
-                        setShowLatestMessage(false); // Hide message initially
+                        if (issoundon) {
+                            setText(cleanText);
+                            setShowLatestMessage(false); // Hide message initially
 
-                        // Use timeout to ensure state updates before triggering
-                        setTimeout(() => {
-                            setSpeakTrigger(prev => prev + 1);
-                            console.log("🚀 Speak trigger incremented");
-                        }, 50);
+                            // Use timeout to ensure state updates before triggering
+                            setTimeout(() => {
+                                setSpeakTrigger(prev => prev + 1);
+                                console.log("🚀 Speak trigger incremented");
+                            }, 50);
+                        } else {
+                            setText('');
+                            setShowLatestMessage(true);
+                        }
                     }
                 }
             }
         }
         prevIsLoading.current = isLoading;
-    }, [isLoading, messages]);
+    }, [isLoading, messages, issoundon]);
+
+    const playNextSpeechSegment = () => {
+        if (!soundOnRef.current) return;
+
+        const nextSegment = speechQueueRef.current.shift();
+        if (!nextSegment) {
+            speechBusyRef.current = false;
+            if (!isLoadingRef.current) {
+                setShowLatestMessage(true);
+            }
+            return;
+        }
+
+        speechBusyRef.current = true;
+        setText(nextSegment);
+        setShowLatestMessage(true);
+        setTimeout(() => setSpeakTrigger(prev => prev + 1), 20);
+    };
 
     useEffect(() => {
-        if (isRecording) {
+        const lastIndex = messages.length - 1;
+        const lastMsg = messages[lastIndex];
+
+        if (!lastMsg || lastMsg.role !== 'assistant') return;
+
+        if (activeAssistantIndexRef.current !== lastIndex) {
+            activeAssistantIndexRef.current = lastIndex;
+            spokenCleanLengthRef.current = 0;
+            speechQueueRef.current = [];
+            speechBusyRef.current = false;
+            setShowLatestMessage(false);
+        }
+
+        if (!issoundon) {
+            setShowLatestMessage(true);
+            return;
+        }
+
+        const cleanText = sanitizeSpeechText(lastMsg.content);
+        if (!cleanText) return;
+
+        const { segments, consumed } = takeSpeakableSegments(
+            cleanText,
+            spokenCleanLengthRef.current,
+            !isLoading
+        );
+
+        if (segments.length > 0) {
+            speechQueueRef.current.push(...segments);
+            spokenCleanLengthRef.current += consumed;
+            if (!speechBusyRef.current) {
+                playNextSpeechSegment();
+            }
+        } else if (!isLoading && !speechBusyRef.current) {
+            setShowLatestMessage(true);
+        }
+    }, [messages, isLoading, issoundon]);
+
+    useEffect(() => {
+        if (realtimeVoice.recording) {
             setCurrentEmotion("listen");
-        } else if (isLoading || isTranscribing) {
+        } else if (isAvatarSpeaking) {
+            return;
+        } else if (isLoading || ['transcribing', 'thinking', 'synthesizing'].includes(realtimeVoice.status)) {
             setCurrentEmotion("think");
         }
-    }, [isRecording, isLoading, isTranscribing]);
+    }, [realtimeVoice.recording, realtimeVoice.status, isLoading, isAvatarSpeaking]);
 
     const handleSpeechStart = () => {
+        speechBusyRef.current = true;
+        setIsAvatarSpeaking(true);
         setShowLatestMessage(true); // Show message when speech starts
         setCurrentEmotion(Math.random() > 0.5 ? "explain1" : "explain2");
     };
 
     const handleSpeechEnd = () => {
+        speechBusyRef.current = false;
+        setIsAvatarSpeaking(false);
         setCurrentEmotion("natural");
+        setTimeout(() => {
+            if (speechPayloadQueueRef.current.length > 0 && soundOnRef.current) {
+                playNextSpeechPayload();
+            } else if (speechQueueRef.current.length > 0 && soundOnRef.current) {
+                playNextSpeechSegment();
+            }
+        }, 80);
     };
 
 
@@ -193,12 +655,34 @@ const AvatarPage = () => {
 
     const handleSpeaking = () => {
         if (!speechText.trim()) return;
+        if (!issoundon) return;
         setCallavatar(true)
         setIschatting(true)
         setText(speechText)
         // Trigger viseme playback by incrementing counter
         setSpeakTrigger(prev => prev + 1)
     }
+
+    const handleSoundToggle = () => {
+        setIssoundon((current) => {
+            const next = !current;
+            if (!next) {
+                speechQueueRef.current = [];
+                speechPayloadQueueRef.current = [];
+                speechBusyRef.current = false;
+                setText('');
+                setSpeechPayload(null);
+                setIsAvatarSpeaking(false);
+                setStopSpeechTrigger(prev => prev + 1);
+                setShowLatestMessage(true);
+            }
+            return next;
+        });
+    };
+
+    const hasPendingAssistant = isLoading
+        && messages[messages.length - 1]?.role === 'assistant'
+        && !messages[messages.length - 1]?.content?.trim();
 
     return (
         <div className="min-h-screen bg-[#030303] flex gap-2 relative overflow-hidden">
@@ -245,9 +729,13 @@ const AvatarPage = () => {
                         ismale={ismale}
                         text={text ? text : ""}
                         speakTrigger={speakTrigger}
+                        speechPayload={speechPayload}
+                        speechPayloadTrigger={speechPayloadTrigger}
+                        stopSpeechTrigger={stopSpeechTrigger}
                         onSpeechStart={handleSpeechStart}
                         onSpeechEnd={handleSpeechEnd}
                         emotions={currentEmotion}
+                        soundEnabled={issoundon}
                     />
                     {/* Use this to rotate the model using mouse pointer */}
                     <OrbitControls />
@@ -296,14 +784,19 @@ const AvatarPage = () => {
 
                 <div className='absolute flex justify-center w-full gap-10 z-10 bottom-4 border-t pt-4 border-white/10'>
                     <div
-                        className={`rounded-full w-fit p-3 cursor-pointer transition-all duration-300 ${isRecording ? 'bg-red-500 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'bg-emerald-500'}`}
+                        className={`rounded-full w-fit p-3 cursor-pointer transition-all duration-300 ${realtimeVoice.recording ? 'bg-red-500 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.5)]' : realtimeVoice.active ? 'bg-emerald-500 ring-2 ring-emerald-300/60' : 'bg-emerald-500'}`}
                         onClick={handleMicToggle}
-                        title={isRecording ? "Stop Recording" : "Start Voice Input"}
+                        title={realtimeVoice.active ? "Stop realtime voice mode" : "Start realtime voice mode"}
                     >
-                        {isRecording ? <Mic size={20} className="text-white" /> : <MicOff size={20} className="text-white" />}
+                        {['transcribing', 'thinking', 'synthesizing'].includes(realtimeVoice.status)
+                            ? <Loader2 size={20} className="text-white animate-spin" />
+                            : (realtimeVoice.active ? <MicOff size={20} className="text-white" /> : <Mic size={20} className="text-white" />)}
                     </div>
-                    <div className='bg-emerald-500 rounded-full p-3'
-                        onClick={() => setIssoundon(!issoundon)}>
+                    <div
+                        className={`${issoundon ? 'bg-emerald-500' : 'bg-white/10 border border-white/10'} rounded-full p-3 cursor-pointer transition-all`}
+                        onClick={handleSoundToggle}
+                        title={issoundon ? 'Mute speaker' : 'Unmute speaker'}
+                    >
 
                         {!issoundon ? <VolumeOff size={20} /> : <Volume2 size={20} />}
                     </div>
@@ -351,19 +844,19 @@ const AvatarPage = () => {
                                                 }}
                                                 placeholder="Start your request, and let FinWise handle everything"
                                                 className="w-full bg-transparent border-none text-white placeholder-gray-500 py-3 focus:outline-none text-sm"
-                                                disabled={isLoading || isTranscribing || isRecording}
+                                                disabled={isLoading || realtimeVoice.active}
                                             />
                                         </div>
 
                                         <button
                                             type="submit"
-                                            disabled={!input.trim() || isLoading || isTranscribing || isRecording}
-                                            className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${(input.trim() || isTranscribing) && !isLoading && !isRecording
+                                            disabled={!input.trim() || isLoading || realtimeVoice.active}
+                                            className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${input.trim() && !isLoading && !realtimeVoice.active
                                                 ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:scale-105'
                                                 : 'bg-white/5 text-gray-600 cursor-not-allowed border border-white/10'
                                                 }`}
                                         >
-                                            {isLoading || isTranscribing ? (
+                                            {isLoading ? (
                                                 <>
                                                     <Loader2 className="animate-spin" size={16} />
                                                 </>
@@ -396,7 +889,7 @@ const AvatarPage = () => {
                                             }`}>
                                             {msg.role === 'assistant' && idx === messages.length - 1 ? (
                                                 showLatestMessage ? (
-                                                    <Typewriter text={msg.content.replace(/```json[\s\S]*?```/g, '').trim()} />
+                                                    <Typewriter text={cleanMessageText(msg.content)} />
                                                 ) : (
                                                     <div className="flex items-center gap-1 h-6">
                                                         <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
@@ -405,9 +898,7 @@ const AvatarPage = () => {
                                                     </div>
                                                 )
                                             ) : (
-                                                <p className="whitespace-pre-wrap leading-relaxed text-[15px]">
-                                                    {msg.content.replace(/```json[\s\S]*?```/g, '').trim()}
-                                                </p>
+                                                <MessageContent content={msg.content} className="text-[15px]" />
                                             )}
                                         </div>
 
@@ -419,15 +910,13 @@ const AvatarPage = () => {
                                     </div>
                                 ))}
 
-                                {isLoading && (
+                                {isLoading && !hasPendingAssistant && (
                                     <div className="flex gap-4 justify-start">
                                         <div className="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-500/20 to-green-600/20 border border-emerald-500/30 flex items-center justify-center shrink-0 mt-1 backdrop-blur-sm">
                                             <Bot size={18} className="text-emerald-400" />
                                         </div>
                                         <div className="bg-white/5 border border-white/10 rounded-2xl backdrop-blur-md px-5 py-4 flex items-center gap-2">
-                                            <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                            <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                                            <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                            <LoadingDots />
                                         </div>
                                     </div>
                                 )}
@@ -450,7 +939,7 @@ const AvatarPage = () => {
                                                 }}
                                                 placeholder="Start your request, and let FinWise handle everything"
                                                 className="w-full bg-transparent border-none text-white placeholder-gray-500 py-3 focus:outline-none text-sm"
-                                                disabled={isLoading || isTranscribing || isRecording}
+                                                disabled={isLoading || realtimeVoice.active}
                                             />
                                         </div>
 
@@ -458,13 +947,13 @@ const AvatarPage = () => {
                                         <div className="flex items-center gap-2 pr-2">
                                             <button
                                                 type="submit"
-                                                disabled={!input.trim() || isLoading || isTranscribing || isRecording}
-                                                className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${(input.trim() || isTranscribing) && !isLoading && !isRecording
+                                                disabled={!input.trim() || isLoading || realtimeVoice.active}
+                                                className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${input.trim() && !isLoading && !realtimeVoice.active
                                                     ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:scale-105'
                                                     : 'bg-white/5 text-gray-600 cursor-not-allowed border border-white/10'
                                                     }`}
                                             >
-                                                {isLoading || isTranscribing ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+                                                {isLoading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
                                             </button>
                                         </div>
                                     </div>

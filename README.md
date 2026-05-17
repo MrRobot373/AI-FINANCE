@@ -90,12 +90,14 @@ DATABASE_URL = "sqlite:///./finance.db"
 OLLAMA_MODEL=gemma2:2b
 VITE_API_URL=http://localhost:8000/api/v1
 VITE_API_TOKEN=your_token_here
+VITE_LOGIN_PASSWORD=finwise2026
 ```
 
 create a another .env file in frontend folder and copy paste the following content
 ``` bash 
 VITE_API_URL=http://localhost:8000/api/v1
 VITE_API_TOKEN=your_token_here
+VITE_LOGIN_PASSWORD=finwise2026
 ```
 
 

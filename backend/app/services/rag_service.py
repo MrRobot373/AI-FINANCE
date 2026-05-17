@@ -2,7 +2,10 @@ import os
 import hashlib
 import logging
 import datetime
+import base64
+import re
 import yfinance as yf
+from zoneinfo import ZoneInfo
 from langchain_ollama import OllamaEmbeddings, OllamaLLM
 from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -16,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 # Put chroma DB in the backend directory so it persists properly relative to where FastAPI runs
 CHROMA_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "chroma_db")
+WEB_SEARCH_MARKER = "WEB_SEARCH_QUERY"
+
+try:
+    LOCAL_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Kolkata"))
+except Exception:
+    LOCAL_TZ = datetime.timezone(datetime.timedelta(hours=5, minutes=30), "IST")
 
 class RagService:
     def __init__(self):
@@ -121,6 +130,166 @@ class RagService:
         context = "\n\n".join([d.page_content for d in docs])
         return context
 
+    def _now(self):
+        return datetime.datetime.now(LOCAL_TZ)
+
+    def _format_now(self):
+        return self._now().strftime("%B %d, %Y, %I:%M %p %Z")
+
+    def _normalize_query(self, query: str):
+        return re.sub(r"\s+", " ", query.lower()).strip()
+
+    def _is_greeting_query(self, query: str):
+        cleaned = re.sub(r"[^a-z\s]", "", query.lower()).strip()
+        greeting_phrases = {
+            "hi", "hii", "hello", "hey", "hey there", "good morning",
+            "good afternoon", "good evening", "namaste"
+        }
+        return cleaned in greeting_phrases
+
+    def _is_date_time_query(self, query: str):
+        q = self._normalize_query(query)
+        has_today = any(term in q for term in ["today", "todays", "today's", "current"])
+        asks_date = "date" in q or "day is it" in q
+        asks_time = "time" in q or "clock" in q
+        return (has_today and (asks_date or asks_time)) or q in {"date", "time", "today date", "todays date"}
+
+    def _date_time_response(self, query: str):
+        now = self._now()
+        q = self._normalize_query(query)
+        if "time" in q or "clock" in q:
+            return f"The current date and time is {now.strftime('%B %d, %Y, %I:%M %p %Z')}."
+        return f"Today's date is {now.strftime('%B %d, %Y')}."
+
+    def _is_affirmative(self, query: str):
+        q = self._normalize_query(query)
+        return q in {"yes", "y", "yeah", "yep", "sure", "ok", "okay", "please do", "go ahead", "search", "search it", "do it"}
+
+    def _is_negative(self, query: str):
+        q = self._normalize_query(query)
+        return q in {"no", "n", "nope", "not now", "dont", "don't", "cancel"}
+
+    def _encode_web_query(self, query: str):
+        encoded = base64.b64encode(query.encode("utf-8")).decode("ascii")
+        return f"<!--{WEB_SEARCH_MARKER}:{encoded}-->"
+
+    def _pending_web_query_from_history(self, history):
+        for msg in reversed(history or []):
+            if getattr(msg, "role", "") != "assistant":
+                continue
+            content = getattr(msg, "content", "") or ""
+            match = re.search(rf"<!--{WEB_SEARCH_MARKER}:([A-Za-z0-9+/=]+)-->", content)
+            if not match:
+                continue
+            try:
+                return base64.b64decode(match.group(1)).decode("utf-8")
+            except Exception:
+                return None
+        return None
+
+    def _web_permission_response(self, query: str):
+        marker = self._encode_web_query(query)
+        return (
+            "I could not find that in the uploaded knowledge base. "
+            "Do you want me to search the web for current information? "
+            "Reply yes to search the web."
+            f"{marker}"
+        )
+
+    def _is_explicit_web_search(self, query: str):
+        q = self._normalize_query(query)
+        return any(phrase in q for phrase in [
+            "search the web", "web search", "look up online", "browse", "internet search"
+        ])
+
+    def _clean_explicit_web_query(self, query: str):
+        cleaned = re.sub(r"\b(search the web|web search|look up online|browse|internet search)\b", "", query, flags=re.I)
+        return cleaned.strip(" :,-") or query
+
+    def _resolve_market_symbol(self, query: str):
+        q = self._normalize_query(query)
+        symbols = {
+            "dax": ("^GDAXI", "DAX Index", "EUR"),
+            "nifty": ("^NSEI", "Nifty 50", "INR"),
+            "nifty 50": ("^NSEI", "Nifty 50", "INR"),
+            "sensex": ("^BSESN", "BSE Sensex", "INR"),
+            "nasdaq": ("^IXIC", "NASDAQ Composite", "USD"),
+            "s&p 500": ("^GSPC", "S&P 500", "USD"),
+            "sp 500": ("^GSPC", "S&P 500", "USD"),
+            "dow jones": ("^DJI", "Dow Jones Industrial Average", "USD"),
+            "ftse": ("^FTSE", "FTSE 100", "GBP"),
+            "nikkei": ("^N225", "Nikkei 225", "JPY"),
+            "apple": ("AAPL", "Apple", "USD"),
+            "microsoft": ("MSFT", "Microsoft", "USD"),
+            "nvidia": ("NVDA", "NVIDIA", "USD"),
+            "tesla": ("TSLA", "Tesla", "USD"),
+            "google": ("GOOGL", "Alphabet", "USD"),
+            "alphabet": ("GOOGL", "Alphabet", "USD"),
+            "amazon": ("AMZN", "Amazon", "USD"),
+            "meta": ("META", "Meta", "USD"),
+        }
+        for key, value in symbols.items():
+            if re.search(rf"\b{re.escape(key)}\b", q):
+                return value
+        return None
+
+    def _currency_prefix(self, currency: str):
+        symbols = {"USD": "$", "INR": "Rs.", "EUR": "EUR ", "GBP": "GBP ", "JPY": "JPY "}
+        return symbols.get((currency or "").upper(), f"{currency} " if currency else "")
+
+    def _market_data_response(self, symbol: str, display_name: str = None, currency_hint: str = None):
+        stock = yf.Ticker(symbol)
+        current_price = None
+        prev_close = None
+        currency = currency_hint
+
+        try:
+            fast_info = stock.fast_info
+            current_price = fast_info.get("last_price")
+            prev_close = fast_info.get("previous_close")
+            currency = fast_info.get("currency") or currency
+        except Exception:
+            pass
+
+        if current_price is None:
+            try:
+                hist = stock.history(period="5d")
+                if not hist.empty:
+                    current_price = float(hist["Close"].iloc[-1])
+                    if len(hist) > 1:
+                        prev_close = float(hist["Close"].iloc[-2])
+            except Exception:
+                pass
+
+        if current_price is None:
+            return ""
+
+        try:
+            info = stock.get_info()
+            display_name = display_name or info.get("shortName") or info.get("longName") or symbol
+            currency = currency or info.get("currency")
+        except Exception:
+            display_name = display_name or symbol
+
+        change_line = ""
+        if prev_close:
+            change = current_price - prev_close
+            change_pct = (change / prev_close) * 100
+            direction = "up" if change >= 0 else "down"
+            change_line = f"\n**Change:** {direction} {change:+,.2f} ({change_pct:+.2f}%)"
+
+        prefix = self._currency_prefix(currency)
+        prev_close_line = f"\n**Previous Close:** {prefix}{prev_close:,.2f}" if prev_close else ""
+
+        return (
+            f"**{display_name} ({symbol}) - Market Data**\n\n"
+            f"**Current Price:** {prefix}{current_price:,.2f}"
+            f"{change_line}"
+            f"{prev_close_line}\n"
+            f"**As of:** {self._format_now()}\n\n"
+            "*(Data retrieved from Yahoo Finance)*"
+        ).strip()
+
     # --- TOOLS ---
     
     def finance_advisor_tool(self, query, context_docs=""):
@@ -144,6 +313,13 @@ class RagService:
 
     def yfinance_tool(self, query):
         try:
+            resolved_symbol = self._resolve_market_symbol(query)
+            if resolved_symbol:
+                symbol, display_name, currency = resolved_symbol
+                market_data = self._market_data_response(symbol, display_name, currency)
+                if market_data:
+                    return market_data
+
             # Step 1: Use AI to classify the query and extract tickers
             prompt = f"""Analyze this stock query and respond with EXACTLY one of these formats:
 - If it's about an INDIAN company, respond: INDIAN:<NSE_TICKER>
@@ -233,10 +409,15 @@ Response:"""
                 change_pct = 0
                 direction = ""
 
+            prev_close_display = f"${prev_close:.2f}" if prev_close else "N/A"
+
             result = f"""**{ticker} - Real-time Stock Data**
 
 **Current Price:** ${current_price:.2f} {direction} ({change:+.2f}, {change_pct:+.2f}%)
-**Previous Close:** ${prev_close:.2f if prev_close else 'N/A'}"""
+**Previous Close:** {prev_close_display}
+**As of:** {self._format_now()}
+
+*(Data retrieved from Yahoo Finance)*"""
             return result.strip()
         except Exception as e:
             logger.error(f"[ERROR] yfinance_tool failed: {str(e)}")
@@ -327,7 +508,8 @@ Response:"""
         
         if context:
             # We got search results - summarize them
-            prompt = f"""Based on the following search results, provide a direct, concise answer to the question.
+            prompt = f"""Current date and time: {self._format_now()}.
+Based on the following search results, provide a direct, concise answer to the question.
 Be brief and to the point. Only include the most relevant information.
 
 Search Results:
@@ -340,7 +522,8 @@ Provide a concise, direct answer (2-3 sentences max) without mentioning sources:
             return result
         else:
             # No search results available - use LLM's own knowledge
-            prompt = f"""Answer the following question using your own knowledge. Be helpful and concise.
+            prompt = f"""Current date and time: {self._format_now()}.
+Answer the following question using your own knowledge. Be helpful and concise.
 If you genuinely don't know the answer, say so honestly and suggest how the user could find the information.
 
 Question: {query}
@@ -351,11 +534,27 @@ Answer (2-3 sentences):"""
 
     # --- ROUTING ENGINE ---
 
-    def process_chat_query(self, query: str):
+    def process_chat_query(self, query: str, history=None):
         """
         Main entry point for handling a RAG chat query.
         Implements tool routing logic.
         """
+        query = (query or "").strip()
+
+        pending_web_query = self._pending_web_query_from_history(history)
+        if pending_web_query:
+            if self._is_affirmative(query):
+                web_answer = self.web_search_full(pending_web_query)
+                return web_answer + "\n\n*(Answer retrieved via Web Search)*"
+            if self._is_negative(query):
+                return "No problem. I will stay within the uploaded knowledge base unless you ask me to search the web."
+
+        if self._is_greeting_query(query):
+            return "Hi, I am FinWise. Ask me about your uploaded finance knowledge, market data, or your tracker."
+
+        if self._is_date_time_query(query):
+            return self._date_time_response(query)
+
         # 1. Check if it's a financial advice question -> Use finance advisor + vector DB context
         if any(keyword in query.lower() for keyword in ['advice', 'recommend', 'should i invest', 'portfolio']):
             context = self.retrieve_context(query)
@@ -366,7 +565,7 @@ Answer (2-3 sentences):"""
         if any(keyword in query.lower() for keyword in stock_keywords):
             yfinance_res = self.yfinance_tool(query)
             if yfinance_res:
-                return yfinance_res + "\n\n*(Data retrieved from Yahoo Finance)*"
+                return yfinance_res
 
         # 3. Default: Try local RAG first
         context = self.retrieve_context(query)
@@ -377,7 +576,10 @@ Answer (2-3 sentences):"""
             if "__NOT_FOUND__" not in doc_answer:
                 return doc_answer
 
-        # 4. Fallback: Web search if local context fails
-        web_answer = self.web_search_full(query)
-        return web_answer + "\n\n*(Answer retrieved via Web Search)*"
+        # 4. Web search only when explicitly requested or confirmed after permission prompt.
+        if self._is_explicit_web_search(query):
+            web_answer = self.web_search_full(self._clean_explicit_web_query(query))
+            return web_answer + "\n\n*(Answer retrieved via Web Search)*"
+
+        return self._web_permission_response(query)
 

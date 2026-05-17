@@ -9,10 +9,14 @@ import { clampMorphInfluence } from "../utils/morphUtils";
 
 function Avatar({ model, handpos, ischatting, text,
     speakTrigger,
+    speechPayload,
+    speechPayloadTrigger = 0,
+    stopSpeechTrigger = 0,
     onSpeechStart,
     onSpeechEnd,
     emotions = "neutral",
-    ismale
+    ismale,
+    soundEnabled = true
 }) {
     const { scene } = useGLTF(model);
     const groupRef = useRef();
@@ -231,7 +235,7 @@ function Avatar({ model, handpos, ischatting, text,
     // VISEME LIP SYNC STATE (NEW SYSTEM)
     // ============================================
     // Hook handles audio playback, timeline, and frame updates
-    const { speak, stop: stopLipSync, isPlaying: isLipSyncing } = useLipSync(headMesh, teethMesh, onSpeechStart, onSpeechEnd);
+    const { speak, speakPayload, stop: stopLipSync, isPlaying: isLipSyncing } = useLipSync(headMesh, teethMesh, onSpeechStart, onSpeechEnd);
 
     // Legacy flags maintained for compatibility with other effects
     const [isPlayingVisemes, setIsPlayingVisemes] = useState(false);
@@ -469,6 +473,12 @@ function Avatar({ model, handpos, ischatting, text,
     // TEXT TO VISEME CONVERSION + AUDIO PLAYBACK
     // ============================================
     useEffect(() => {
+        if (!soundEnabled) {
+            stopLipSync();
+            stopSpeaking();
+            return;
+        }
+
         if (speakTrigger > 0 && text && text.trim() !== '') {
             console.log(`🗣️ Avatar Component: Received speak trigger #${speakTrigger} for text:`, text.substring(0, 30) + "...");
             speak(text, ismale);
@@ -477,7 +487,28 @@ function Avatar({ model, handpos, ischatting, text,
         return () => {
             stopLipSync();
         };
-    }, [speakTrigger, text, speak, stopLipSync, ismale]);
+    }, [speakTrigger, text, speak, stopLipSync, ismale, soundEnabled]);
+
+    useEffect(() => {
+        if (!soundEnabled) return;
+        if (speechPayloadTrigger > 0 && speechPayload?.audio_url) {
+            speakPayload(speechPayload);
+        }
+    }, [speechPayloadTrigger, speechPayload, speakPayload, soundEnabled]);
+
+    useEffect(() => {
+        if (stopSpeechTrigger > 0) {
+            stopLipSync();
+            stopSpeaking();
+        }
+    }, [stopSpeechTrigger, stopLipSync]);
+
+    useEffect(() => {
+        if (!soundEnabled) {
+            stopLipSync();
+            stopSpeaking();
+        }
+    }, [soundEnabled, stopLipSync]);
 
     // Stop lip sync and audio when text is cleared
     useEffect(() => {

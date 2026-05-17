@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { File, Trash2, Loader2, AlertCircle } from 'lucide-react';
+import { getApiBaseUrl } from '../../utils/apiBase';
 
 const TrainingMonitor = () => {
     const [embeddings, setEmbeddings] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const apiUrl = getApiBaseUrl();
     const token = localStorage.getItem('token');
 
     const fetchFiles = async () => {
@@ -42,7 +43,7 @@ const TrainingMonitor = () => {
         if (!window.confirm(`Are you sure you want to delete ${id} from the knowledge base?`)) return;
 
         try {
-            const response = await fetch(`${apiUrl}/ai/knowledge/files/${id}`, {
+            const response = await fetch(`${apiUrl}/ai/knowledge/files/${encodeURIComponent(id)}`, {
                 method: 'DELETE',
                 headers: {
                     'Authorization': `Bearer ${token}`

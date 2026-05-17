@@ -212,20 +212,39 @@ async def voice_to_text(audio: UploadFile = File(...)):
     Used by the Avatar page for speech-to-speech conversations.
     """
     try:
-        from app.services.speech_service import SpeechService
-        speech_service = SpeechService()
+        from app.services.stt_service import STTService
+        stt_service = STTService()
         
         audio_bytes = await audio.read()
         
         if len(audio_bytes) < 100:
             raise HTTPException(status_code=400, detail="Audio file is too small or empty.")
-        
-        text = speech_service.transcribe(audio_bytes)
+
+        suffix = os.path.splitext(audio.filename or "")[1] or ".webm"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_file.write(audio_bytes)
+            temp_path = temp_file.name
+
+        try:
+            result = stt_service.transcribe_file(temp_path)
+            text = result.text
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
         
         if not text or not text.strip():
             return {"text": "", "message": "No speech detected in the audio."}
         
-        return {"text": text.strip()}
+        return {
+            "text": text.strip(),
+            "stt": {
+                "engine": result.engine,
+                "model": result.model,
+                "device": result.device,
+                "compute_type": result.compute_type,
+                "duration_ms": result.duration_ms,
+            },
+        }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
@@ -266,7 +285,7 @@ async def record_voice_with_vad():
             
         speech_service = SpeechService()
         text = speech_service.transcribe(audio_bytes)
-        print(f"✅ Transcribed: {text}")
+        print(f"Transcribed: {text}")
         
         if not text or not text.strip():
             return {"text": "", "message": "No speech detected in the audio."}

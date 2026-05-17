@@ -9,9 +9,10 @@ import {
     getChatMessages,
     getCategories
 } from '../services/api';
+import { getApiBaseUrl } from '../utils/apiBase';
 
 // Define API_URL for direct fetch calls (not using axios instance)
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+const API_URL = getApiBaseUrl();
 
 export const useChatStore = create((set, get) => ({
     sessions: [],
@@ -104,6 +105,29 @@ export const useChatStore = create((set, get) => ({
 
     // --- Messaging ---
     addMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),
+
+    startAssistantMessage: () => set((state) => ({
+        messages: [
+            ...state.messages,
+            { role: 'assistant', content: '', created_at: new Date().toISOString() }
+        ]
+    })),
+
+    appendAssistantDelta: (delta) => set((state) => {
+        const messages = [...state.messages];
+        const last = messages[messages.length - 1];
+
+        if (!last || last.role !== 'assistant') {
+            messages.push({ role: 'assistant', content: delta, created_at: new Date().toISOString() });
+        } else {
+            messages[messages.length - 1] = {
+                ...last,
+                content: `${last.content || ''}${delta || ''}`,
+            };
+        }
+
+        return { messages };
+    }),
 
     sendMessage: async (content, mode = 'chat') => {
         const { addMessage, currentSessionId, createNewSession } = get();

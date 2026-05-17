@@ -24,9 +24,35 @@ except ImportError:
         g2p = G2p()
         _g2p_backend = "g2p_en"
     except Exception as e:
-        print(f"⚠️ Failed to initialize g2p-arpabet / g2p_en: {e}")
+        print(f"Failed to initialize g2p-arpabet / g2p_en: {e}")
 
 # Allosaurus removed - audio upload feature deprecated
+
+_nltk_ready = False
+
+
+def ensure_nltk_data():
+    """Download the small NLTK resources required by g2p_en when missing."""
+    global _nltk_ready
+    if _nltk_ready:
+        return
+
+    try:
+        import nltk
+
+        required = [
+            ("taggers/averaged_perceptron_tagger_eng", "averaged_perceptron_tagger_eng"),
+            ("taggers/averaged_perceptron_tagger", "averaged_perceptron_tagger"),
+            ("corpora/cmudict", "cmudict"),
+        ]
+        for path, package in required:
+            try:
+                nltk.data.find(path)
+            except LookupError:
+                nltk.download(package, quiet=True)
+        _nltk_ready = True
+    except Exception as e:
+        print(f"Could not verify NLTK data for g2p_en: {e}")
 
 
 # ARPABET Durations (in seconds)
@@ -89,6 +115,7 @@ def text_to_phonemes(text: str, language: str = 'en-us') -> str:
     """
     if not g2p:
         raise RuntimeError("g2p-arpabet / g2p_en not initialized")
+    ensure_nltk_data()
     
     if not text or text.strip() == '':
         return ''
@@ -107,7 +134,7 @@ def text_to_phonemes(text: str, language: str = 'en-us') -> str:
             
         return ' '.join(processed)
     except Exception as e:
-        print(f"❌ G2P error: {e}")
+        print(f"G2P error: {e}")
         raise RuntimeError(f"G2P conversion failed: {str(e)}")
 
 
@@ -125,6 +152,7 @@ def text_to_viseme_sequence(text: str, language: str = 'en-us') -> List[Dict]:
     """
     if not g2p:
         raise RuntimeError("g2p-arpabet / g2p_en not initialized")
+    ensure_nltk_data()
         
     # Get phoneme list from g2p
     # Example: ['HH', 'AH0', 'L', 'OW1', ' ', 'W', 'ER1', 'L', 'D']
@@ -215,6 +243,7 @@ def text_to_grouped_viseme_sequence(text: str, language: str = 'en-us') -> List[
     """
     if not g2p:
         raise RuntimeError("g2p-arpabet / g2p_en not initialized")
+    ensure_nltk_data()
         
     # Get phoneme list from g2p
     raw_phonemes = g2p(text)

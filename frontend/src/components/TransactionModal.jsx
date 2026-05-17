@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useSyncExternalStore } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Plus, Loader2 } from 'lucide-react';
 import { getCategories, createCategory, createTransaction, updateTransaction } from '../services/api';
 import { formatDateForInput } from '../utils/dateUtils';
@@ -12,7 +12,6 @@ const TransactionModal = ({ isOpen, onClose, onTransactionAdded, transactionToEd
     const [amount, setAmount] = useState('');
     const [description, setDescription] = useState('');
     const [categoryId, setCategoryId] = useState('');
-    const [defaultCategory, setDefaultCategory] = useState('');
     const [date, setDate] = useState(formatDateForInput(new Date()));
     const [newCategoryName, setNewCategoryName] = useState('');
     const [type, setType] = useState('expense');
@@ -21,12 +20,17 @@ const TransactionModal = ({ isOpen, onClose, onTransactionAdded, transactionToEd
     
 
     useEffect(() => {
-        if (type === "expense") {
-            setFilteredCategories([...categories.filter(cat => !cat.is_income)])
-        } else {
-            setFilteredCategories([...categories.filter(cat => cat.is_income)])
-        }
+        const selectableCategories = categories.filter((cat) => {
+            const matchesType = type === 'expense' ? !cat.is_income : cat.is_income;
+            return matchesType && cat.name !== 'Recurring' && cat.name !== 'Goals';
+        });
 
+        setFilteredCategories(selectableCategories);
+        setCategoryId((current) => (
+            selectableCategories.some((cat) => cat.id === current)
+                ? current
+                : selectableCategories[0]?.id || ''
+        ));
     }, [type, categories]);
 
     useEffect(() => {
@@ -43,8 +47,7 @@ const TransactionModal = ({ isOpen, onClose, onTransactionAdded, transactionToEd
                 // Reset for new
                 setAmount('');
                 setDescription('');
-                setDefaultCategory('');
-                setCategoryId(defaultCategory.id);
+                setCategoryId('');
                 setDate(formatDateForInput(new Date()));
                 setType('expense');
             }
@@ -54,7 +57,6 @@ const TransactionModal = ({ isOpen, onClose, onTransactionAdded, transactionToEd
     const fetchCategories = async () => {
         setLoading(true);
         const data = await getCategories();
-        setDefaultCategory(data[0]);
         setCategories(data);
         setLoading(false);
     };
@@ -198,12 +200,9 @@ const TransactionModal = ({ isOpen, onClose, onTransactionAdded, transactionToEd
                                     {filteredCategories.length === 0 ? (
                                         <option value="">Create {type} Category</option>
                                     ) : (
-                                        filteredCategories.map(cat => {
-                                            if (cat.name === "Recurring" || cat.name === "Goals") {
-                                                return null;
-                                            }
-                                            return <option key={cat.id} value={cat.id}>{cat.name}</option>;
-                                        })
+                                        filteredCategories.map(cat => (
+                                            <option key={cat.id} value={cat.id}>{cat.name}</option>
+                                        ))
                                     )}
                                 </select>
                                 <button

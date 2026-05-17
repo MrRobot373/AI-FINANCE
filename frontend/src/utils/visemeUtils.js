@@ -6,8 +6,10 @@
  * Now supports both local conversion and API-based Phonemizer service
  */
 
+import { apiUrl } from './apiBase';
+
 // API Configuration
-const PHONEME_API_URL = 'http://localhost:8000/api/v1/phoneme/text-to-visemes';
+const PHONEME_API_URL = apiUrl('/phoneme/text-to-visemes');
 const USE_API = true; // Set to false to always use local conversion
 
 
@@ -630,7 +632,7 @@ export async function textToVisemesAPI(text, language = 'en-us') {
  * @returns {Promise<{audio_url: string, visemes: Array}>} 
  */
 export async function textToAudioVisemesAPI(text, isMale = true) {
-    const TTS_API_URL = 'http://localhost:8000/api/v1/phoneme/tts-to-visemes';
+    const TTS_API_URL = apiUrl('/phoneme/tts-to-visemes');
 
     try {
         console.log('📤 Sending text to backend for TTS & lip sync...');

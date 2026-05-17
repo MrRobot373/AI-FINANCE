@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Send, Loader2, Bot, User, History, X } from 'lucide-react';
 import { useChatStore } from '../../store/useChatStore';
 import ChatSidebar from './ChatSidebar'
+import MessageContent, { LoadingDots } from '../../utils/messageFormatting.jsx';
 
 const SimpleChatInterface = () => {
 
@@ -14,6 +15,9 @@ const SimpleChatInterface = () => {
 
     const [input, setInput] = useState('');
     const messagesEndRef = useRef(null);
+    const hasPendingAssistant = isLoading
+        && messages[messages.length - 1]?.role === 'assistant'
+        && !messages[messages.length - 1]?.content?.trim();
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -83,9 +87,7 @@ const SimpleChatInterface = () => {
                                     ? 'bg-emerald-500/10 text-white border border-emerald-500/20'
                                     : 'bg-white/5 text-gray-200 border border-white/10'
                                     }`}>
-                                    <p className="whitespace-pre-wrap leading-relaxed text-sm">
-                                        {msg.content.replace(/```json[\s\S]*?```/g, '').trim()}
-                                    </p>
+                                    <MessageContent content={msg.content} className="text-sm" />
                                 </div>
 
                                 {msg.role === 'user' && (
@@ -96,15 +98,13 @@ const SimpleChatInterface = () => {
                             </div>
                         ))}
 
-                        {isLoading && (
+                        {isLoading && !hasPendingAssistant && (
                             <div className="flex gap-3 justify-start">
                                 <div className="w-8 h-8 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0 mt-1">
                                     <Bot size={16} className="text-emerald-400" />
                                 </div>
                                 <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-3 flex items-center gap-2">
-                                    <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                    <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                                    <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                    <LoadingDots />
                                 </div>
                             </div>
                         )}

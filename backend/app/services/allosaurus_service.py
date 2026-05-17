@@ -35,7 +35,7 @@ def get_phonemes_from_audio(audio_path: str) -> list:
         List of phoneme strings
     """
     if _allosaurus_model is None:
-        raise RuntimeError("Allosaurus model not loaded. Call load_allosaurus_model() first.")
+        load_allosaurus_model()
     
     # Get phoneme string from Allosaurus
     phoneme_str = _allosaurus_model.recognize(audio_path)

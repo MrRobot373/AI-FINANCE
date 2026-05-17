@@ -24,7 +24,8 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
     const currentEventIndex = useRef(0);
     const speechId = useRef(0);
     const animationStartTime = useRef(0); // Track when animation started
-    const LEAD_IN_TIME = 0.1; // Start animation 1 second before audio (in seconds)
+    const isPlayingRef = useRef(false);
+    const LEAD_IN_TIME = 0.04;
 
     // Store callbacks in refs
     const onStartRef = useRef(onStart);
@@ -37,6 +38,10 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
     useEffect(() => {
         onEndRef.current = onEnd;
     }, [onEnd]);
+
+    useEffect(() => {
+        isPlayingRef.current = isPlaying;
+    }, [isPlaying]);
 
     // Reset morph targets to 0
     const resetMorphTargets = useCallback(() => {
@@ -66,6 +71,7 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
 
     // Cleanup function
     const cleanup = useCallback(() => {
+        const shouldNotifyEnd = isPlayingRef.current || Boolean(audioRef.current);
         if (audioRef.current) {
             audioRef.current.pause();
             audioRef.current.onended = null;
@@ -73,13 +79,76 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
             audioRef.current = null;
         }
         setIsPlaying(false);
+        isPlayingRef.current = false;
         resetMorphTargets();
 
-        if (onEndRef.current) onEndRef.current();
+        if (shouldNotifyEnd && onEndRef.current) onEndRef.current();
     }, [resetMorphTargets]);
 
     /** Max characters per TTS request to avoid 200+ events and playback failures with long text */
     const MAX_SPEECH_CHARS = 1200;
+
+    const startPlaybackFromData = useCallback(async (data, currentId) => {
+        const { audio_url, phonemes, visemes, grouped_visemes } = data || {};
+
+        if (!audio_url) {
+            console.warn("No audio_url returned");
+            return;
+        }
+
+        let timeline;
+        if (grouped_visemes && grouped_visemes.length > 0) {
+            timeline = groupedVisemesToTimeline(grouped_visemes);
+        } else if (visemes && visemes.length > 0) {
+            timeline = backendVisemesToTimeline(visemes);
+        } else if (phonemes && phonemes.length > 0) {
+            timeline = createVisemeTimeline(phonemes);
+        } else {
+            console.warn("No phonemes, visemes, or grouped_visemes returned for speech.");
+            return;
+        }
+
+        timelineRef.current = timeline;
+        currentEventIndex.current = 0;
+
+        const separator = audio_url.includes('?') ? '&' : '?';
+        const cacheBustedUrl = `${audio_url}${separator}_t=${Date.now()}`;
+
+        const audio = new Audio(cacheBustedUrl);
+        audio.crossOrigin = "anonymous";
+        audio.playbackRate = 1;
+        audioRef.current = audio;
+
+        const timelineDuration = timeline.length > 0 ? timeline[timeline.length - 1].endTime : 0;
+
+        audio.onloadedmetadata = () => {
+            if (currentId !== speechId.current) return;
+
+            const dur = audio.duration;
+            durationRatio.current = timeline.length > 0 && Number.isFinite(dur) && dur > 0
+                ? timelineDuration / dur
+                : 1.0;
+        };
+
+        setIsPlaying(true);
+        isPlayingRef.current = true;
+        animationStartTime.current = performance.now() / 1000;
+        if (onStartRef.current) onStartRef.current();
+
+        audio.onended = () => {
+            if (currentId === speechId.current) cleanup();
+        };
+
+        setTimeout(async () => {
+            if (currentId !== speechId.current) return;
+            try {
+                await audio.play();
+            } catch (error) {
+                console.error("Audio play error:", error);
+                if (currentId === speechId.current) cleanup();
+            }
+        }, LEAD_IN_TIME * 1000);
+    }, [cleanup]);
 
     /**
      * Start speaking
@@ -166,6 +235,7 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
 
             // Start animation immediately (before audio)
             setIsPlaying(true);
+            isPlayingRef.current = true;
             animationStartTime.current = performance.now() / 1000; // Store start time in seconds
             if (onStartRef.current) onStartRef.current();
 
@@ -209,6 +279,27 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
         speechId.current++;
         cleanup();
     }, [cleanup]);
+
+    const speakPayload = useCallback(async (payload) => {
+        speechId.current++;
+        const currentId = speechId.current;
+
+        if (!payload?.audio_url) return;
+
+        if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current = null;
+        }
+
+        setIsPlaying(false);
+
+        try {
+            await startPlaybackFromData(payload, currentId);
+        } catch (error) {
+            console.error("LipSync payload error:", error);
+            if (currentId === speechId.current) cleanup();
+        }
+    }, [cleanup, startPlaybackFromData]);
 
     // Animation Loop
     useFrame((state, delta) => {
@@ -347,6 +438,7 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
 
     return {
         speak,
+        speakPayload,
         stop,
         isPlaying
     };
