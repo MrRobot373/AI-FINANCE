@@ -1,0 +1,51 @@
+FinWise update summary
+
+Repository and setup
+- Cloned and worked on MrRobot373/AI-FINANCE.
+- Installed and verified the frontend and backend dependencies needed to run the project locally.
+- Ran the frontend at http://127.0.0.1:5173 and backend at http://127.0.0.1:8000 during testing.
+
+Dataset upload and training fixes
+- Fixed dataset upload handling so PDF and TXT files can be used as training inputs.
+- Fixed training history fetch behavior that was showing "Failed to fetch files".
+- Improved backend handling for uploaded file metadata and browser-submitted audio/file formats.
+
+Login, chat, RAG, and data improvements
+- Removed the old hardcoded login password value.
+- Login now uses VITE_LOGIN_PASSWORD, with finwise2026 as the default fallback.
+- Fixed duplicate AI loading icons in chat.
+- Added clickable link rendering and Markdown cleanup in chat messages.
+- Improved RAG responses for greetings, current date/time, DAX/common market-price questions, and fallback web-search permission flow.
+- Added predefined income and expense categories with automatic category seeding.
+
+Avatar planning and voice pipeline changes
+- Added AVATAR_REALTIME_IMPROVEMENT_PLAN.md with the detailed realtime avatar improvement plan.
+- Reworked the avatar page controls and voice mode labels.
+- Replaced the earlier browser recording/websocket voice approach with a FastRTC WebRTC transport.
+- Fixed the issue where the UI said "Realtime voice active..." but no audio was being processed by adding WebRTC data-channel status and microphone level feedback.
+- Kept FastRTC as the browser-to-backend realtime transport.
+
+On-device speech-to-speech pipeline
+- Switched the backend voice pipeline to match the attached on-device speech-to-speech project based on asiff00/On-Device-Speech-to-Speech-Conversational-AI.
+- Integrated the same core stack:
+  - Pyannote VAD using pyannote/segmentation-3.0.
+  - Whisper STT using openai/whisper-tiny.en.
+  - Ollama LLM using qwen2.5:0.5b from the attached pipeline configuration.
+  - TextChunker and AudioGenerationQueue style streaming response flow.
+  - Kokoro TTS using kokoro.pth and the af_heart voice assets from the attached local pipeline folder.
+- Removed the previous Moonshine/Piper-style backend voice path from the active avatar flow.
+- Pinned voice dependencies to avoid NumPy 2 compatibility issues, including numpy==1.26.4, pyannote.audio==3.3.2, torch==2.4.1, torchaudio==2.4.1, and matching transformer/audio packages.
+
+Verification completed
+- Ran npm run build successfully.
+- Ran pip check successfully after dependency pinning.
+- Verified backend health readiness.
+- Verified model loading for the on-device voice stack.
+- Verified Kokoro TTS generation.
+- Verified Pyannote and Whisper transcription.
+- Ran a full WebRTC smoke test for the avatar realtime voice path.
+
+Git status before this file
+- The avatar and speech-to-speech changes were pushed to GitHub.
+- Remote main was updated through commit 0e12d26 before adding this update summary file.
+- Secrets and local .env values were not committed.
