@@ -12,6 +12,7 @@ function Avatar({ model, handpos, ischatting, text,
     speechPayload,
     speechPayloadTrigger = 0,
     stopSpeechTrigger = 0,
+    externalAudioStream = null,
     onSpeechStart,
     onSpeechEnd,
     emotions = "neutral",
@@ -235,7 +236,14 @@ function Avatar({ model, handpos, ischatting, text,
     // VISEME LIP SYNC STATE (NEW SYSTEM)
     // ============================================
     // Hook handles audio playback, timeline, and frame updates
-    const { speak, speakPayload, stop: stopLipSync, isPlaying: isLipSyncing } = useLipSync(headMesh, teethMesh, onSpeechStart, onSpeechEnd);
+    const {
+        speak,
+        speakPayload,
+        bindExternalAudioStream,
+        stopExternalAudioStream,
+        stop: stopLipSync,
+        isPlaying: isLipSyncing
+    } = useLipSync(headMesh, teethMesh, onSpeechStart, onSpeechEnd);
 
     // Legacy flags maintained for compatibility with other effects
     const [isPlayingVisemes, setIsPlayingVisemes] = useState(false);
@@ -488,6 +496,16 @@ function Avatar({ model, handpos, ischatting, text,
             stopLipSync();
         };
     }, [speakTrigger, text, speak, stopLipSync, ismale, soundEnabled]);
+
+    useEffect(() => {
+        if (!soundEnabled || !externalAudioStream) {
+            stopExternalAudioStream();
+            return;
+        }
+
+        bindExternalAudioStream(externalAudioStream);
+        return () => stopExternalAudioStream();
+    }, [externalAudioStream, soundEnabled, bindExternalAudioStream, stopExternalAudioStream]);
 
     useEffect(() => {
         if (!soundEnabled) return;

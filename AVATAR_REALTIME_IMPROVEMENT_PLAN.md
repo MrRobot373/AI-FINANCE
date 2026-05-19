@@ -78,6 +78,29 @@ Implementation decision:
 - Add optional OpenAI-compatible TTS support behind environment variables instead of making it mandatory.
 - Continue sending FinWise-specific `speech_chunk` payloads with `audio_url`, `visemes`, `grouped_visemes`, and `phonemes`.
 
+## Local Voice AI Agent Integration
+
+Reference repo: https://github.com/jesuscopado/local-voice-ai-agent
+
+This repo is a better fit for a low-latency speech-to-speech experiment than Vocalis because its core loop is small and direct: FastRTC handles realtime browser audio, `ReplyOnPause` handles turn detection, Moonshine handles STT, Ollama handles the LLM call, and a local TTS model streams audio back over WebRTC.
+
+Implementation decision:
+
+- Add a second, optional FinWise voice transport at `/api/v1/avatar/rtc`.
+- Keep the existing `/api/v1/avatar/realtime` WebSocket path as the default stable avatar path.
+- Use FastRTC only when `ENABLE_FASTRTC_AVATAR=true` and the optional voice dependencies are installed.
+- Keep the FinWise `AIService` prompt and database context instead of using the demo repo prompt directly.
+- Stream Piper audio back through FastRTC by default so the main backend can keep the existing LangChain/Chroma `numpy<2` dependency set.
+- Keep Kokoro as an optional separate-environment experiment, not the default project install.
+- Add amplitude-based lip sync for the FastRTC audio stream because FastRTC returns audio chunks, not FinWise phoneme payloads.
+
+Install notes:
+
+- Base app dependencies stay in `backend/requirements.txt`.
+- FastRTC/Moonshine dependencies live in `backend/requirements-voice.txt`.
+- Kokoro currently requires `numpy>=2.0.2`, which conflicts with this project's Python 3.11 LangChain/Chroma pins. Use Kokoro only in a separate voice environment if we decide the voice quality is worth the extra service boundary.
+- GPU can be tested later with `onnxruntime-gpu`, but it should be installed only after confirming the local CUDA/cuDNN compatibility.
+
 ## Main Problems To Solve
 
 1. **Turn-taking still feels delayed**

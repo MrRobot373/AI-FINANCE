@@ -201,6 +201,14 @@ async def generate_speech(
         return await _generate_with_edge_or_gtts(text, voice)
 
 
+async def generate_piper_speech(text: str, gender: str = "male") -> str:
+    """Generate local Piper speech without trying remote/OpenAI-compatible TTS first."""
+    if not text or not text.strip():
+        raise RuntimeError("No text supplied for TTS generation.")
+
+    return await _generate_with_piper(text, gender=gender)
+
+
 def cleanup_old_files():
     current_time = time.time()
 

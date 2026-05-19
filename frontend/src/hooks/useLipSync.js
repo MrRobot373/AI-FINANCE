@@ -19,6 +19,12 @@ import { clampMorphInfluence } from '../utils/morphUtils';
 export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
     const [isPlaying, setIsPlaying] = useState(false);
     const audioRef = useRef(null);
+    const externalAudioContextRef = useRef(null);
+    const externalSourceRef = useRef(null);
+    const externalAnalyserRef = useRef(null);
+    const externalSamplesRef = useRef(null);
+    const externalLevelRef = useRef(0);
+    const externalActiveRef = useRef(false);
     const timelineRef = useRef([]);
     const durationRatio = useRef(1.0);
     const currentEventIndex = useRef(0);
@@ -84,6 +90,54 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
 
         if (shouldNotifyEnd && onEndRef.current) onEndRef.current();
     }, [resetMorphTargets]);
+
+    const stopExternalAudioStream = useCallback(() => {
+        const shouldNotifyEnd = externalActiveRef.current;
+        externalSourceRef.current?.disconnect();
+        externalSourceRef.current = null;
+        externalAnalyserRef.current = null;
+        externalSamplesRef.current = null;
+        externalLevelRef.current = 0;
+        externalActiveRef.current = false;
+
+        if (externalAudioContextRef.current) {
+            externalAudioContextRef.current.close().catch(() => { });
+            externalAudioContextRef.current = null;
+        }
+
+        setIsPlaying(false);
+        isPlayingRef.current = false;
+        resetMorphTargets();
+        if (shouldNotifyEnd && onEndRef.current) onEndRef.current();
+    }, [resetMorphTargets]);
+
+    const bindExternalAudioStream = useCallback(async (stream) => {
+        stopExternalAudioStream();
+        if (!stream) return;
+
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
+
+        const audioContext = new AudioContext();
+        if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+        }
+
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 1024;
+        source.connect(analyser);
+
+        externalAudioContextRef.current = audioContext;
+        externalSourceRef.current = source;
+        externalAnalyserRef.current = analyser;
+        externalSamplesRef.current = new Uint8Array(analyser.fftSize);
+        externalActiveRef.current = true;
+        externalLevelRef.current = 0;
+        setIsPlaying(true);
+        isPlayingRef.current = true;
+        if (onStartRef.current) onStartRef.current();
+    }, [stopExternalAudioStream]);
 
     /** Max characters per TTS request to avoid 200+ events and playback failures with long text */
     const MAX_SPEECH_CHARS = 1200;
@@ -277,8 +331,9 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
 
     const stop = useCallback(() => {
         speechId.current++;
+        stopExternalAudioStream();
         cleanup();
-    }, [cleanup]);
+    }, [cleanup, stopExternalAudioStream]);
 
     const speakPayload = useCallback(async (payload) => {
         speechId.current++;
@@ -303,7 +358,7 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
 
     // Animation Loop
     useFrame((state, delta) => {
-        if (!isPlaying || !audioRef.current || !headMeshRef.current) return;
+        if (!isPlaying || !headMeshRef.current) return;
 
         const hDict = headMeshRef.current.morphTargetDictionary;
         const hInfl = headMeshRef.current.morphTargetInfluences;
@@ -311,6 +366,42 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
         const tInfl = teethMeshRef.current?.morphTargetInfluences;
 
         if (!hDict || !hInfl) return;
+
+        if (externalActiveRef.current && externalAnalyserRef.current && externalSamplesRef.current) {
+            externalAnalyserRef.current.getByteTimeDomainData(externalSamplesRef.current);
+
+            let sum = 0;
+            for (let i = 0; i < externalSamplesRef.current.length; i += 1) {
+                const normalized = (externalSamplesRef.current[i] - 128) / 128;
+                sum += normalized * normalized;
+            }
+
+            const rms = Math.sqrt(sum / externalSamplesRef.current.length);
+            const targetLevel = Math.min(1, Math.max(0, (rms - 0.012) * 14));
+            const blend = Math.min(Math.max(delta * 18, 0), 1);
+            externalLevelRef.current = MathUtils.lerp(externalLevelRef.current, targetLevel, blend);
+
+            const apply = (key, value) => {
+                if (hDict[key] !== undefined) {
+                    const current = Number(hInfl[hDict[key]]) || 0;
+                    hInfl[hDict[key]] = clampMorphInfluence(MathUtils.lerp(current, value, blend));
+                }
+                if (tDict && tInfl && tDict[key] !== undefined) {
+                    const currentT = Number(tInfl[tDict[key]]) || 0;
+                    tInfl[tDict[key]] = clampMorphInfluence(MathUtils.lerp(currentT, value, blend));
+                }
+            };
+
+            ALL_SHAPE_KEYS.forEach((key) => apply(key, 0));
+            apply('Lips_Open_Wide', externalLevelRef.current * 0.9);
+            apply('TeethTongue_Open', externalLevelRef.current);
+            apply('Lips_Wide', externalLevelRef.current * 0.25);
+            apply('mouthOpen', externalLevelRef.current);
+            apply('jawOpen', externalLevelRef.current * 0.8);
+            return;
+        }
+
+        if (!audioRef.current) return;
 
         // Debug: Log randomly
         if (Math.random() < 0.005) {
@@ -439,6 +530,8 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
     return {
         speak,
         speakPayload,
+        bindExternalAudioStream,
+        stopExternalAudioStream,
         stop,
         isPlaying
     };

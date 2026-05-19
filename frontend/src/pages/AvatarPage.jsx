@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, Loader2, Bot, User, Sparkles, Mic, Volume2, RefreshCcw, MicOff, VolumeOff, MessageSquare, Speech } from 'lucide-react';
+import { Send, Loader2, Bot, User, Sparkles, Mic, Volume2, RefreshCcw, MicOff, VolumeOff, MessageSquare, Speech, Radio } from 'lucide-react';
 import FloatingNav from '../components/FloatingNav';
 import { useChatStore } from '../store/useChatStore';
 import { useNavigate } from 'react-router-dom';
@@ -12,6 +12,7 @@ import MessageContent, { LoadingDots } from '../utils/messageFormatting.jsx';
 import { cleanMessageText } from '../utils/messageText.js';
 import { apiUrl } from '../utils/apiBase';
 import { useRealtimeVoice } from '../hooks/useRealtimeVoice';
+import { useFastRtcVoice } from '../hooks/useFastRtcVoice';
 
 const Typewriter = ({ text, onComplete }) => {
     const [displayText, setDisplayText] = useState('');
@@ -157,6 +158,7 @@ const AvatarPage = () => {
     const isLoadingRef = useRef(false);
     const soundOnRef = useRef(true);
     const voiceModeActiveRef = useRef(false);
+    const fastRtcAudioRef = useRef(null);
 
     useEffect(() => {
         isLoadingRef.current = isLoading;
@@ -229,6 +231,25 @@ const AvatarPage = () => {
             setInput('');
         },
     });
+    const fastRtcVoice = useFastRtcVoice();
+
+    useEffect(() => {
+        const audio = fastRtcAudioRef.current;
+        if (!audio) return;
+
+        audio.muted = !issoundon;
+        audio.volume = issoundon ? 1 : 0;
+
+        if (fastRtcVoice.remoteStream) {
+            audio.srcObject = fastRtcVoice.remoteStream;
+            audio.play().catch((err) => {
+                console.error('FastRTC audio playback failed:', err);
+            });
+        } else {
+            audio.pause();
+            audio.srcObject = null;
+        }
+    }, [fastRtcVoice.remoteStream, issoundon]);
 
     useEffect(() => {
         if (!realtimeVoice.active) return;
@@ -245,6 +266,23 @@ const AvatarPage = () => {
         };
         setInput(labels[realtimeVoice.status] ?? '');
     }, [realtimeVoice.active, realtimeVoice.status]);
+
+    useEffect(() => {
+        if (!fastRtcVoice.active) return;
+
+        const labels = {
+            connecting: 'Connecting realtime voice...',
+            connected: 'Connected...',
+            listening: 'Listening...',
+            speaking: 'Speaking...',
+            unavailable: '',
+            disconnected: '',
+            failed: '',
+            closed: '',
+            idle: '',
+        };
+        setInput(labels[fastRtcVoice.status] ?? '');
+    }, [fastRtcVoice.active, fastRtcVoice.status]);
 
     useEffect(() => {
         if (!realtimeVoice.active) return;
@@ -469,7 +507,27 @@ const AvatarPage = () => {
             return;
         }
 
+        if (fastRtcVoice.active) {
+            fastRtcVoice.stop();
+        }
+
         await realtimeVoice.start();
+    };
+
+    const handleFastRtcToggle = async () => {
+        if (fastRtcVoice.active) {
+            fastRtcVoice.stop();
+            stopCurrentAvatarSpeech();
+            return;
+        }
+
+        if (realtimeVoice.active) {
+            realtimeVoice.stop();
+        }
+
+        stopCurrentAvatarSpeech();
+        setIschatting(true);
+        await fastRtcVoice.start();
     };
 
     useEffect(() => {
@@ -614,14 +672,14 @@ const AvatarPage = () => {
     }, [messages, isLoading, issoundon]);
 
     useEffect(() => {
-        if (realtimeVoice.recording) {
+        if (realtimeVoice.recording || (fastRtcVoice.active && ['listening', 'connecting', 'connected'].includes(fastRtcVoice.status))) {
             setCurrentEmotion("listen");
         } else if (isAvatarSpeaking) {
             return;
         } else if (isLoading || ['transcribing', 'thinking', 'synthesizing'].includes(realtimeVoice.status)) {
             setCurrentEmotion("think");
         }
-    }, [realtimeVoice.recording, realtimeVoice.status, isLoading, isAvatarSpeaking]);
+    }, [realtimeVoice.recording, realtimeVoice.status, fastRtcVoice.active, fastRtcVoice.status, isLoading, isAvatarSpeaking]);
 
     const handleSpeechStart = () => {
         speechBusyRef.current = true;
@@ -683,6 +741,10 @@ const AvatarPage = () => {
     const hasPendingAssistant = isLoading
         && messages[messages.length - 1]?.role === 'assistant'
         && !messages[messages.length - 1]?.content?.trim();
+    const fastRtcMissing = fastRtcVoice.health?.missing_dependencies?.join(', ');
+    const fastRtcTitle = fastRtcVoice.ready
+        ? (fastRtcVoice.active ? 'Stop FastRTC speech-to-speech mode' : 'Start FastRTC speech-to-speech mode')
+        : (fastRtcMissing ? `Install FastRTC voice dependencies: ${fastRtcMissing}` : 'FastRTC voice backend is not enabled');
 
     return (
         <div className="min-h-screen bg-[#030303] flex gap-2 relative overflow-hidden">
@@ -732,6 +794,7 @@ const AvatarPage = () => {
                         speechPayload={speechPayload}
                         speechPayloadTrigger={speechPayloadTrigger}
                         stopSpeechTrigger={stopSpeechTrigger}
+                        externalAudioStream={fastRtcVoice.remoteStream}
                         onSpeechStart={handleSpeechStart}
                         onSpeechEnd={handleSpeechEnd}
                         emotions={currentEmotion}
@@ -740,6 +803,7 @@ const AvatarPage = () => {
                     {/* Use this to rotate the model using mouse pointer */}
                     <OrbitControls />
                 </Canvas>
+                <audio ref={fastRtcAudioRef} autoPlay playsInline className="hidden" />
 
                 {/* Speech Input Section - Independent from Chat */}
                 {/* <div className='absolute flex flex-col items-center w-full gap-3 z-10 bottom-20 px-4'>
@@ -792,6 +856,23 @@ const AvatarPage = () => {
                             ? <Loader2 size={20} className="text-white animate-spin" />
                             : (realtimeVoice.active ? <MicOff size={20} className="text-white" /> : <Mic size={20} className="text-white" />)}
                     </div>
+                    <button
+                        type="button"
+                        disabled={!fastRtcVoice.ready && !fastRtcVoice.active}
+                        className={`rounded-full w-fit p-3 transition-all duration-300 ${fastRtcVoice.active
+                            ? 'bg-blue-500 ring-2 ring-blue-300/60'
+                            : fastRtcVoice.ready
+                                ? 'bg-cyan-500 hover:shadow-[0_0_18px_rgba(34,211,238,0.35)]'
+                                : 'bg-white/10 border border-white/10 text-gray-500 cursor-not-allowed'
+                        }`}
+                        onClick={handleFastRtcToggle}
+                        title={fastRtcTitle}
+                        aria-label={fastRtcTitle}
+                    >
+                        {fastRtcVoice.status === 'connecting'
+                            ? <Loader2 size={20} className="text-white animate-spin" />
+                            : <Radio size={20} className={fastRtcVoice.ready || fastRtcVoice.active ? 'text-white' : 'text-gray-500'} />}
+                    </button>
                     <div
                         className={`${issoundon ? 'bg-emerald-500' : 'bg-white/10 border border-white/10'} rounded-full p-3 cursor-pointer transition-all`}
                         onClick={handleSoundToggle}
@@ -844,14 +925,14 @@ const AvatarPage = () => {
                                                 }}
                                                 placeholder="Start your request, and let FinWise handle everything"
                                                 className="w-full bg-transparent border-none text-white placeholder-gray-500 py-3 focus:outline-none text-sm"
-                                                disabled={isLoading || realtimeVoice.active}
+                                                disabled={isLoading || realtimeVoice.active || fastRtcVoice.active}
                                             />
                                         </div>
 
                                         <button
                                             type="submit"
-                                            disabled={!input.trim() || isLoading || realtimeVoice.active}
-                                            className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${input.trim() && !isLoading && !realtimeVoice.active
+                                            disabled={!input.trim() || isLoading || realtimeVoice.active || fastRtcVoice.active}
+                                            className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${input.trim() && !isLoading && !realtimeVoice.active && !fastRtcVoice.active
                                                 ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:scale-105'
                                                 : 'bg-white/5 text-gray-600 cursor-not-allowed border border-white/10'
                                                 }`}
@@ -939,7 +1020,7 @@ const AvatarPage = () => {
                                                 }}
                                                 placeholder="Start your request, and let FinWise handle everything"
                                                 className="w-full bg-transparent border-none text-white placeholder-gray-500 py-3 focus:outline-none text-sm"
-                                                disabled={isLoading || realtimeVoice.active}
+                                                disabled={isLoading || realtimeVoice.active || fastRtcVoice.active}
                                             />
                                         </div>
 
@@ -947,8 +1028,8 @@ const AvatarPage = () => {
                                         <div className="flex items-center gap-2 pr-2">
                                             <button
                                                 type="submit"
-                                                disabled={!input.trim() || isLoading || realtimeVoice.active}
-                                                className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${input.trim() && !isLoading && !realtimeVoice.active
+                                                disabled={!input.trim() || isLoading || realtimeVoice.active || fastRtcVoice.active}
+                                                className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${input.trim() && !isLoading && !realtimeVoice.active && !fastRtcVoice.active
                                                     ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:scale-105'
                                                     : 'bg-white/5 text-gray-600 cursor-not-allowed border border-white/10'
                                                     }`}

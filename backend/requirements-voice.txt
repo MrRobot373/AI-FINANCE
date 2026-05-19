@@ -1,0 +1,13 @@
+# Optional realtime voice stack inspired by jesuscopado/local-voice-ai-agent.
+# Uses FastRTC for WebRTC/VAD/Moonshine STT and the existing Piper TTS stack.
+fastrtc[vad,stt]==0.0.34
+
+# Optional GPU acceleration for Moonshine ONNX on Windows/NVIDIA.
+# Install manually only if your CUDA/cuDNN versions match onnxruntime-gpu.
+# onnxruntime-gpu>=1.20.1
+
+# Optional Kokoro TTS mode:
+# Kokoro currently requires numpy >=2, while this project pins LangChain/Chroma
+# to numpy <2 on Python 3.11. Use Kokoro only in a separate voice environment,
+# then set FASTRTC_TTS_MODEL=kokoro.
+# kokoro-onnx==0.5.0
