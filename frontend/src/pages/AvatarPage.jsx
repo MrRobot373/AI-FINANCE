@@ -180,9 +180,11 @@ const AvatarPage = () => {
         const labels = {
             requesting_microphone: 'Allow microphone access...',
             connecting: 'Connecting realtime voice...',
-            connected: 'Realtime voice active...',
-            listening: 'Listening...',
-            speaking: 'Realtime voice active...',
+            connected: 'Listening...',
+            listening: fastRtcVoice.inputLevel > 0.02 ? 'Listening, mic signal detected...' : 'Listening, waiting for voice...',
+            hearing: 'Hearing you...',
+            processing: 'Processing speech...',
+            speaking: 'Speaking...',
             unavailable: '',
             disconnected: '',
             failed: '',
@@ -190,7 +192,7 @@ const AvatarPage = () => {
             idle: '',
         };
         setInput(labels[fastRtcVoice.status] ?? '');
-    }, [fastRtcVoice.active, fastRtcVoice.status]);
+    }, [fastRtcVoice.active, fastRtcVoice.status, fastRtcVoice.inputLevel]);
 
     const handleVoiceToggle = async () => {
         if (voiceToggleInFlightRef.current) return;
@@ -354,7 +356,7 @@ const AvatarPage = () => {
     }, [messages, isLoading, issoundon]);
 
     useEffect(() => {
-        if (fastRtcVoice.active && ['listening', 'connecting', 'connected', 'speaking'].includes(fastRtcVoice.status)) {
+        if (fastRtcVoice.active && ['listening', 'connecting', 'connected', 'hearing', 'processing', 'speaking'].includes(fastRtcVoice.status)) {
             setCurrentEmotion("listen");
         } else if (isAvatarSpeaking) {
             return;
@@ -416,8 +418,10 @@ const AvatarPage = () => {
     const fastRtcStatusText = fastRtcVoice.error || {
         requesting_microphone: 'Allow microphone access',
         connecting: 'Connecting voice',
-        connected: 'Voice active',
-        listening: 'Listening',
+        connected: 'Listening',
+        listening: fastRtcVoice.inputLevel > 0.02 ? 'Listening, mic signal detected' : 'Listening, waiting for voice',
+        hearing: 'Hearing you',
+        processing: 'Processing speech',
         speaking: 'Speaking',
         disconnected: 'Voice disconnected',
         failed: 'Voice connection failed',
@@ -488,7 +492,15 @@ const AvatarPage = () => {
                             ? 'border-red-500/40 bg-red-500/15 text-red-200'
                             : 'border-emerald-500/30 bg-black/45 text-emerald-100'
                         }`}>
-                            {fastRtcStatusText}
+                            <span>{fastRtcStatusText}</span>
+                            {fastRtcVoice.active && !fastRtcVoice.error && (
+                                <span className="ml-3 inline-flex h-1.5 w-14 overflow-hidden rounded-full bg-white/10 align-middle">
+                                    <span
+                                        className="h-full rounded-full bg-emerald-300 transition-all duration-100"
+                                        style={{ width: `${Math.max(6, Math.round(fastRtcVoice.inputLevel * 100))}%` }}
+                                    />
+                                </span>
+                            )}
                         </div>
                     )}
                     <button

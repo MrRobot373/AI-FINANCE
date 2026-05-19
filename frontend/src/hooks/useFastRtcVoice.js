@@ -34,11 +34,106 @@ export function useFastRtcVoice() {
     const [active, setActive] = useState(false);
     const [remoteStream, setRemoteStream] = useState(null);
     const [error, setError] = useState('');
+    const [inputLevel, setInputLevel] = useState(0);
+    const [lastEvent, setLastEvent] = useState('');
 
     const peerConnectionRef = useRef(null);
+    const dataChannelRef = useRef(null);
     const localStreamRef = useRef(null);
     const remoteStreamRef = useRef(null);
     const activeRef = useRef(false);
+    const audioContextRef = useRef(null);
+    const inputLevelFrameRef = useRef(null);
+    const lastInputLevelUpdateRef = useRef(0);
+
+    const teardownInputMeter = useCallback(() => {
+        if (inputLevelFrameRef.current) {
+            window.cancelAnimationFrame(inputLevelFrameRef.current);
+            inputLevelFrameRef.current = null;
+        }
+
+        if (audioContextRef.current) {
+            audioContextRef.current.close().catch(() => {});
+            audioContextRef.current = null;
+        }
+
+        setInputLevel(0);
+    }, []);
+
+    const setupInputMeter = useCallback((stream) => {
+        teardownInputMeter();
+
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+
+        try {
+            const audioContext = new AudioContextClass();
+            const analyser = audioContext.createAnalyser();
+            analyser.fftSize = 1024;
+
+            const source = audioContext.createMediaStreamSource(stream);
+            source.connect(analyser);
+            audioContextRef.current = audioContext;
+
+            const samples = new Uint8Array(analyser.fftSize);
+            const readLevel = (timestamp = 0) => {
+                analyser.getByteTimeDomainData(samples);
+
+                let sum = 0;
+                for (let index = 0; index < samples.length; index += 1) {
+                    const centered = (samples[index] - 128) / 128;
+                    sum += centered * centered;
+                }
+
+                if (timestamp - lastInputLevelUpdateRef.current > 90) {
+                    lastInputLevelUpdateRef.current = timestamp;
+                    setInputLevel(Math.min(1, Math.sqrt(sum / samples.length) * 5));
+                }
+
+                inputLevelFrameRef.current = window.requestAnimationFrame(readLevel);
+            };
+
+            inputLevelFrameRef.current = window.requestAnimationFrame(readLevel);
+        } catch (err) {
+            console.warn('FastRTC microphone level meter failed:', err);
+        }
+    }, [teardownInputMeter]);
+
+    const handleDataChannelMessage = useCallback((event) => {
+        let message = event.data;
+        try {
+            message = JSON.parse(event.data);
+        } catch {
+            // FastRTC messages are normally JSON, but keep raw messages harmless.
+        }
+
+        const type = typeof message === 'object' ? message.type : '';
+        const data = typeof message === 'object' ? message.data ?? message.message : message;
+        const eventText = Array.isArray(data) ? data.join(', ') : String(data || '');
+
+        if (type === 'log') {
+            setLastEvent(eventText);
+            if (eventText === 'started_talking') setStatus('hearing');
+            if (eventText === 'pause_detected') setStatus('processing');
+            if (eventText === 'response_starting') setStatus('speaking');
+            return;
+        }
+
+        if (type === 'warning') {
+            setLastEvent(eventText);
+            return;
+        }
+
+        if (type === 'error') {
+            setError(eventText || 'FastRTC voice pipeline failed');
+            setStatus('error');
+            return;
+        }
+
+        if (type === 'end_stream') {
+            setStatus('idle');
+        }
+    }, []);
 
     const refreshHealth = useCallback(async () => {
         try {
@@ -62,7 +157,10 @@ export function useFastRtcVoice() {
         activeRef.current = false;
         setActive(false);
         setStatus('idle');
+        setLastEvent('');
 
+        dataChannelRef.current?.close();
+        dataChannelRef.current = null;
         peerConnectionRef.current?.close();
         peerConnectionRef.current = null;
 
@@ -72,7 +170,8 @@ export function useFastRtcVoice() {
         remoteStreamRef.current?.getTracks().forEach((track) => track.stop());
         remoteStreamRef.current = null;
         setRemoteStream(null);
-    }, []);
+        teardownInputMeter();
+    }, [teardownInputMeter]);
 
     const start = useCallback(async () => {
         setError('');
@@ -114,12 +213,27 @@ export function useFastRtcVoice() {
             });
 
             const peerConnection = new RTCPeerConnection();
+            const dataChannel = peerConnection.createDataChannel('finwise-events');
             const nextRemoteStream = new MediaStream();
             const webrtcId = createWebRtcId();
+
+            dataChannelRef.current = dataChannel;
+            dataChannel.onopen = () => {
+                if (activeRef.current) setStatus('listening');
+            };
+            dataChannel.onmessage = handleDataChannelMessage;
+            dataChannel.onerror = () => {
+                setError('FastRTC control channel failed.');
+                setStatus('error');
+            };
+            dataChannel.onclose = () => {
+                if (activeRef.current) setStatus('disconnected');
+            };
 
             localStream.getTracks().forEach((track) => {
                 peerConnection.addTrack(track, localStream);
             });
+            setupInputMeter(localStream);
 
             peerConnection.ontrack = (event) => {
                 event.streams[0]?.getAudioTracks().forEach((track) => {
@@ -130,12 +244,17 @@ export function useFastRtcVoice() {
                 }
                 remoteStreamRef.current = nextRemoteStream;
                 setRemoteStream(nextRemoteStream);
-                setStatus('connected');
             };
 
             peerConnection.onconnectionstatechange = () => {
                 const nextState = peerConnection.connectionState;
-                if (nextState === 'connected') setStatus('connected');
+                if (nextState === 'connected') {
+                    setStatus((current) => (
+                        ['connecting', 'connected', 'requesting_microphone'].includes(current)
+                            ? 'listening'
+                            : current
+                    ));
+                }
                 if (nextState === 'failed' || nextState === 'closed' || nextState === 'disconnected') {
                     if (activeRef.current) setStatus(nextState);
                 }
@@ -189,6 +308,8 @@ export function useFastRtcVoice() {
         health,
         ready,
         remoteStream,
+        inputLevel,
+        lastEvent,
         error,
         start,
         stop,

@@ -25,6 +25,8 @@ _kokoro_bundle = None
 _mount_error = None
 _lock = threading.Lock()
 _model_lock = threading.Lock()
+_warmup_lock = threading.Lock()
+_warmup_started = False
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -91,6 +93,7 @@ def get_fastrtc_voice_health() -> Dict[str, object]:
             "gender": os.getenv("FASTRTC_TTS_GENDER", "female"),
             "language": os.getenv("FASTRTC_TTS_LANG", DEFAULT_TTS_LANG),
             "stt_loaded": _stt_model is not None,
+            "stt_warmup_started": _warmup_started,
             "tts_loaded": (_kokoro_bundle is not None) if is_kokoro else True,
         },
         "install": {
@@ -122,6 +125,7 @@ def mount_fastrtc_voice(app) -> bool:
             _stream.mount(app, path=MOUNT_PATH, tags=["Avatar FastRTC"])
             _mount_error = None
             logger.info("Mounted FastRTC avatar voice endpoint at %s", MOUNT_PATH)
+            _start_stt_warmup()
             return True
     except Exception as exc:
         _mount_error = str(exc)
@@ -152,6 +156,30 @@ def _load_stt_model():
             _stt_model = get_stt_model(os.getenv("FASTRTC_STT_MODEL", DEFAULT_STT_MODEL))
 
     return _stt_model
+
+
+def _start_stt_warmup() -> None:
+    global _warmup_started
+
+    if not _env_bool("FASTRTC_PRELOAD_STT", default=True):
+        return
+
+    with _warmup_lock:
+        if _warmup_started or _stt_model is not None:
+            return
+        _warmup_started = True
+
+    def warmup() -> None:
+        global _mount_error
+        try:
+            logger.info("Warming FastRTC STT model in the background.")
+            _load_stt_model()
+            logger.info("FastRTC STT model is ready.")
+        except Exception as exc:
+            _mount_error = f"FastRTC STT warmup failed: {exc}"
+            logger.exception("FastRTC STT warmup failed.")
+
+    threading.Thread(target=warmup, daemon=True).start()
 
 
 def _load_kokoro_tts():
