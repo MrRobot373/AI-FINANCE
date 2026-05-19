@@ -94,8 +94,16 @@ export function useFastRtcVoice() {
             return false;
         }
 
+        if (!window.RTCPeerConnection) {
+            setError('Browser WebRTC is not supported.');
+            setStatus('error');
+            return false;
+        }
+
         try {
-            setStatus('connecting');
+            activeRef.current = true;
+            setActive(true);
+            setStatus('requesting_microphone');
             const localStream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     channelCount: 1,
@@ -136,8 +144,7 @@ export function useFastRtcVoice() {
             peerConnectionRef.current = peerConnection;
             localStreamRef.current = localStream;
             remoteStreamRef.current = nextRemoteStream;
-            activeRef.current = true;
-            setActive(true);
+            setStatus('connecting');
 
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);

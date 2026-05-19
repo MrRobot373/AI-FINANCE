@@ -133,6 +133,8 @@ const AvatarPage = () => {
     const isLoadingRef = useRef(false);
     const soundOnRef = useRef(true);
     const fastRtcAudioRef = useRef(null);
+    const voiceToggleInFlightRef = useRef(false);
+    const suppressVoiceClickRef = useRef(false);
 
     useEffect(() => {
         isLoadingRef.current = isLoading;
@@ -176,6 +178,7 @@ const AvatarPage = () => {
         if (!fastRtcVoice.active) return;
 
         const labels = {
+            requesting_microphone: 'Allow microphone access...',
             connecting: 'Connecting realtime voice...',
             connected: 'Realtime voice active...',
             listening: 'Listening...',
@@ -190,15 +193,36 @@ const AvatarPage = () => {
     }, [fastRtcVoice.active, fastRtcVoice.status]);
 
     const handleVoiceToggle = async () => {
-        if (fastRtcVoice.active) {
-            fastRtcVoice.stop();
+        if (voiceToggleInFlightRef.current) return;
+        voiceToggleInFlightRef.current = true;
+
+        try {
+            if (fastRtcVoice.active) {
+                fastRtcVoice.stop();
+                stopCurrentAvatarSpeech();
+                return;
+            }
+
             stopCurrentAvatarSpeech();
+            setIschatting(true);
+            await fastRtcVoice.start();
+        } finally {
+            voiceToggleInFlightRef.current = false;
+        }
+    };
+
+    const handleVoicePointerDown = (event) => {
+        event.preventDefault();
+        suppressVoiceClickRef.current = true;
+        handleVoiceToggle();
+    };
+
+    const handleVoiceClick = () => {
+        if (suppressVoiceClickRef.current) {
+            suppressVoiceClickRef.current = false;
             return;
         }
-
-        stopCurrentAvatarSpeech();
-        setIschatting(true);
-        await fastRtcVoice.start();
+        handleVoiceToggle();
     };
 
     const scrollToBottom = () => {
@@ -389,6 +413,17 @@ const AvatarPage = () => {
     const fastRtcTitle = fastRtcVoice.ready
         ? (fastRtcVoice.active ? 'Stop FastRTC speech-to-speech mode' : 'Start FastRTC speech-to-speech mode')
         : (fastRtcMissing ? `Install FastRTC voice dependencies: ${fastRtcMissing}` : 'FastRTC voice backend is not enabled');
+    const fastRtcStatusText = fastRtcVoice.error || {
+        requesting_microphone: 'Allow microphone access',
+        connecting: 'Connecting voice',
+        connected: 'Voice active',
+        listening: 'Listening',
+        speaking: 'Speaking',
+        disconnected: 'Voice disconnected',
+        failed: 'Voice connection failed',
+        closed: 'Voice stopped',
+        unavailable: 'Voice unavailable',
+    }[fastRtcVoice.status];
 
     return (
         <div className="min-h-screen bg-[#030303] flex gap-2 relative overflow-hidden">
@@ -447,17 +482,26 @@ const AvatarPage = () => {
                 </Canvas>
                 <audio ref={fastRtcAudioRef} autoPlay playsInline className="hidden" />
 
-                <div className='absolute flex justify-center w-full gap-10 z-10 bottom-4 border-t pt-4 border-white/10'>
+                <div className='absolute flex justify-center w-full gap-10 z-20 bottom-24 border-t pt-4 border-white/10'>
+                    {(fastRtcVoice.active || fastRtcVoice.error) && fastRtcStatusText && (
+                        <div className={`absolute bottom-16 rounded-full border px-4 py-2 text-xs backdrop-blur-xl ${fastRtcVoice.error
+                            ? 'border-red-500/40 bg-red-500/15 text-red-200'
+                            : 'border-emerald-500/30 bg-black/45 text-emerald-100'
+                        }`}>
+                            {fastRtcStatusText}
+                        </div>
+                    )}
                     <button
                         type="button"
                         disabled={!fastRtcVoice.ready && !fastRtcVoice.active}
-                        className={`rounded-full w-fit p-3 transition-all duration-300 ${fastRtcVoice.active
+                        className={`rounded-full w-fit p-3 transition-all duration-300 cursor-pointer ${fastRtcVoice.active
                             ? 'bg-emerald-500 ring-2 ring-emerald-300/60'
                             : fastRtcVoice.ready
                                 ? 'bg-emerald-500 hover:shadow-[0_0_18px_rgba(16,185,129,0.4)]'
                                 : 'bg-white/10 border border-white/10 text-gray-500 cursor-not-allowed'
                         }`}
-                        onClick={handleVoiceToggle}
+                        onPointerDown={handleVoicePointerDown}
+                        onClick={handleVoiceClick}
                         title={fastRtcTitle}
                         aria-label={fastRtcTitle}
                     >
