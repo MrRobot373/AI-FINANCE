@@ -413,8 +413,8 @@ const AvatarPage = () => {
         && !messages[messages.length - 1]?.content?.trim();
     const fastRtcMissing = fastRtcVoice.health?.missing_dependencies?.join(', ');
     const fastRtcTitle = fastRtcVoice.ready
-        ? (fastRtcVoice.active ? 'Stop FastRTC speech-to-speech mode' : 'Start FastRTC speech-to-speech mode')
-        : (fastRtcMissing ? `Install FastRTC voice dependencies: ${fastRtcMissing}` : 'FastRTC voice backend is not enabled');
+        ? (fastRtcVoice.active ? 'Stop on-device speech-to-speech mode' : 'Start on-device speech-to-speech mode')
+        : (fastRtcMissing ? `Install on-device voice dependencies: ${fastRtcMissing}` : 'On-device voice backend is not enabled');
     const fastRtcStatusText = fastRtcVoice.error || {
         requesting_microphone: 'Allow microphone access',
         connecting: 'Connecting voice',
