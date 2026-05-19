@@ -92,7 +92,6 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
     }, [resetMorphTargets]);
 
     const stopExternalAudioStream = useCallback(() => {
-        const shouldNotifyEnd = externalActiveRef.current;
         externalSourceRef.current?.disconnect();
         externalSourceRef.current = null;
         externalAnalyserRef.current = null;
@@ -108,7 +107,6 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
         setIsPlaying(false);
         isPlayingRef.current = false;
         resetMorphTargets();
-        if (shouldNotifyEnd && onEndRef.current) onEndRef.current();
     }, [resetMorphTargets]);
 
     const bindExternalAudioStream = useCallback(async (stream) => {
@@ -136,7 +134,6 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
         externalLevelRef.current = 0;
         setIsPlaying(true);
         isPlayingRef.current = true;
-        if (onStartRef.current) onStartRef.current();
     }, [stopExternalAudioStream]);
 
     /** Max characters per TTS request to avoid 200+ events and playback failures with long text */

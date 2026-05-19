@@ -122,7 +122,7 @@ export function useFastRtcVoice() {
                 }
                 remoteStreamRef.current = nextRemoteStream;
                 setRemoteStream(nextRemoteStream);
-                setStatus('speaking');
+                setStatus('connected');
             };
 
             peerConnection.onconnectionstatechange = () => {

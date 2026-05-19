@@ -6,7 +6,7 @@ import yfinance as yf
 
 load_dotenv()
 
-from app.api.v1.routes import categories, transactions, goals, recurring, ai, train, phoneme, realtime_voice, fastrtc_voice
+from app.api.v1.routes import categories, transactions, goals, recurring, ai, train, phoneme, fastrtc_voice
 from app.db.database import engine, Base
 from app.services.fastrtc_voice_service import mount_fastrtc_voice
 
@@ -51,7 +51,6 @@ api_v1_router.include_router(recurring.router, prefix="/recurring", tags=["Recur
 api_v1_router.include_router(ai.router, prefix="/ai", tags=["AI"])
 api_v1_router.include_router(train.router, prefix="/train", tags=["Training"])
 api_v1_router.include_router(phoneme.router, prefix="/phoneme", tags=["Phoneme"])
-api_v1_router.include_router(realtime_voice.router, prefix="/avatar", tags=["Avatar Realtime"])
 api_v1_router.include_router(fastrtc_voice.router, prefix="/avatar", tags=["Avatar FastRTC"])
 
 app.include_router(api_v1_router, prefix="/api/v1")

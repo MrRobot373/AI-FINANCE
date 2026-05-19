@@ -86,8 +86,9 @@ This repo is a better fit for a low-latency speech-to-speech experiment than Voc
 
 Implementation decision:
 
-- Add a second, optional FinWise voice transport at `/api/v1/avatar/rtc`.
-- Keep the existing `/api/v1/avatar/realtime` WebSocket path as the default stable avatar path.
+- Use the FinWise voice transport at `/api/v1/avatar/rtc`.
+- Make `/api/v1/avatar/rtc` the only avatar voice transport exposed by the UI.
+- Remove the old `/api/v1/avatar/realtime` WebSocket route from the mounted API to avoid two competing voice paths.
 - Use FastRTC only when `ENABLE_FASTRTC_AVATAR=true` and the optional voice dependencies are installed.
 - Keep the FinWise `AIService` prompt and database context instead of using the demo repo prompt directly.
 - Stream Piper audio back through FastRTC by default so the main backend can keep the existing LangChain/Chroma `numpy<2` dependency set.

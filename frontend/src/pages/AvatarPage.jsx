@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, Loader2, Bot, User, Sparkles, Mic, Volume2, RefreshCcw, MicOff, VolumeOff, MessageSquare, Speech, Radio } from 'lucide-react';
+import { Send, Loader2, Bot, User, Mic, Volume2, RefreshCcw, MicOff, VolumeOff } from 'lucide-react';
 import FloatingNav from '../components/FloatingNav';
 import { useChatStore } from '../store/useChatStore';
 import { useNavigate } from 'react-router-dom';
@@ -10,8 +10,6 @@ import { OrbitControls } from '@react-three/drei';
 import VenomBlob from '../components/VenomBlob';
 import MessageContent, { LoadingDots } from '../utils/messageFormatting.jsx';
 import { cleanMessageText } from '../utils/messageText.js';
-import { apiUrl } from '../utils/apiBase';
-import { useRealtimeVoice } from '../hooks/useRealtimeVoice';
 import { useFastRtcVoice } from '../hooks/useFastRtcVoice';
 
 const Typewriter = ({ text, onComplete }) => {
@@ -107,13 +105,9 @@ const AvatarPage = () => {
         isLoading,
         sendMessage,
         currentSessionId,
-        setSection,
-        addMessage,
-        startAssistantMessage,
-        appendAssistantDelta
+        setSection
     } = useChatStore();
     const [input, setInput] = useState('');
-    const [speechText, setSpeechText] = useState(''); // Separate state for speech/lip sync
     const [ischatting, setIschatting] = useState(false)
     const emotions = ["happy", "sad", "explain1", "explain2", "listen", "Think", "natural"]
     const [currentEmotion, setCurrentEmotion] = useState("natural")
@@ -124,40 +118,20 @@ const AvatarPage = () => {
     const messagesEndRef = useRef(null);
     const [ismale, setIsmale] = useState(true)
     const [issoundon, setIssoundon] = useState(true)
-    const [ismicon, setIsmicon] = useState(true)
     const [reloadKey, setReloadKey] = useState(0)
     const [text, setText] = useState("")
-    const [speechPayload, setSpeechPayload] = useState(null)
-    const [speechPayloadTrigger, setSpeechPayloadTrigger] = useState(0)
     const [stopSpeechTrigger, setStopSpeechTrigger] = useState(0)
-    const [callavatar, setCallavatar] = useState(false)
     const [speakTrigger, setSpeakTrigger] = useState(0)
     const [showLatestMessage, setShowLatestMessage] = useState(false); // Controls visibility of last msg
     const nav = useNavigate()
 
-    // --- Voice Recording State ---
-    const [isRecording, setIsRecording] = useState(false);
-    const mediaRecorderRef = useRef(null);
-    const audioChunksRef = useRef([]);
-    const recordingStreamRef = useRef(null);
-    const [isTranscribing, setIsTranscribing] = useState(false);
-    const [voiceModeActive, setVoiceModeActive] = useState(false);
     const [isAvatarSpeaking, setIsAvatarSpeaking] = useState(false);
-    const audioContextRef = useRef(null);
-    const analyserRef = useRef(null);
-    const vadFrameRef = useRef(null);
-    const speechDetectedRef = useRef(false);
-    const silenceStartedAtRef = useRef(null);
-    const recordingStartedAtRef = useRef(0);
-    const discardRecordingRef = useRef(false);
     const speechQueueRef = useRef([]);
-    const speechPayloadQueueRef = useRef([]);
     const speechBusyRef = useRef(false);
     const spokenCleanLengthRef = useRef(0);
     const activeAssistantIndexRef = useRef(-1);
     const isLoadingRef = useRef(false);
     const soundOnRef = useRef(true);
-    const voiceModeActiveRef = useRef(false);
     const fastRtcAudioRef = useRef(null);
 
     useEffect(() => {
@@ -168,69 +142,16 @@ const AvatarPage = () => {
         soundOnRef.current = issoundon;
     }, [issoundon]);
 
-    useEffect(() => {
-        voiceModeActiveRef.current = voiceModeActive;
-    }, [voiceModeActive]);
-
-    const playNextSpeechPayload = () => {
-        if (!soundOnRef.current) return;
-
-        const nextPayload = speechPayloadQueueRef.current.shift();
-        if (!nextPayload) {
-            speechBusyRef.current = false;
-            return;
-        }
-
-        speechBusyRef.current = true;
-        setSpeechPayload(nextPayload);
-        setShowLatestMessage(true);
-        setSpeechPayloadTrigger(prev => prev + 1);
-    };
-
     const stopCurrentAvatarSpeech = () => {
         speechQueueRef.current = [];
-        speechPayloadQueueRef.current = [];
         speechBusyRef.current = false;
         setText('');
-        setSpeechPayload(null);
         setIsAvatarSpeaking(false);
         setShowLatestMessage(true);
         setCurrentEmotion("listen");
         setStopSpeechTrigger(prev => prev + 1);
     };
 
-    const realtimeVoice = useRealtimeVoice({
-        gender: ismale ? 'male' : 'female',
-        isAssistantSpeaking: isAvatarSpeaking || speechBusyRef.current,
-        onFinalTranscript: (transcript) => {
-            if (!transcript?.trim()) return;
-            setInput('');
-            setIschatting(true);
-            addMessage({ role: 'user', content: transcript, created_at: new Date().toISOString() });
-        },
-        onAssistantStart: () => {
-            setIschatting(true);
-            setShowLatestMessage(false);
-            startAssistantMessage();
-        },
-        onAssistantDelta: (delta) => {
-            appendAssistantDelta(delta);
-        },
-        onSpeechChunk: (chunk) => {
-            speechPayloadQueueRef.current.push(chunk);
-            if (!speechBusyRef.current && soundOnRef.current) {
-                playNextSpeechPayload();
-            }
-        },
-        onAssistantDone: () => {
-            setShowLatestMessage(true);
-        },
-        onBargeIn: stopCurrentAvatarSpeech,
-        onError: (message) => {
-            console.error('Realtime voice error:', message);
-            setInput('');
-        },
-    });
     const fastRtcVoice = useFastRtcVoice();
 
     useEffect(() => {
@@ -252,29 +173,13 @@ const AvatarPage = () => {
     }, [fastRtcVoice.remoteStream, issoundon]);
 
     useEffect(() => {
-        if (!realtimeVoice.active) return;
-
-        const labels = {
-            connected: 'Connected...',
-            listening: 'Listening...',
-            speech_detected: 'Listening...',
-            transcribing: 'Transcribing...',
-            thinking: 'Thinking...',
-            synthesizing: 'Preparing voice...',
-            idle: '',
-            disconnected: '',
-        };
-        setInput(labels[realtimeVoice.status] ?? '');
-    }, [realtimeVoice.active, realtimeVoice.status]);
-
-    useEffect(() => {
         if (!fastRtcVoice.active) return;
 
         const labels = {
             connecting: 'Connecting realtime voice...',
-            connected: 'Connected...',
+            connected: 'Realtime voice active...',
             listening: 'Listening...',
-            speaking: 'Speaking...',
+            speaking: 'Realtime voice active...',
             unavailable: '',
             disconnected: '',
             failed: '',
@@ -284,264 +189,17 @@ const AvatarPage = () => {
         setInput(labels[fastRtcVoice.status] ?? '');
     }, [fastRtcVoice.active, fastRtcVoice.status]);
 
-    useEffect(() => {
-        if (!realtimeVoice.active) return;
-        if (realtimeVoice.recording || isAvatarSpeaking || speechBusyRef.current || isLoading) return;
-        if (['transcribing', 'thinking', 'synthesizing', 'speech_detected'].includes(realtimeVoice.status)) return;
-
-        const timer = setTimeout(() => {
-            if (!speechBusyRef.current) {
-                realtimeVoice.startRecording();
-            }
-        }, 450);
-
-        return () => clearTimeout(timer);
-    }, [realtimeVoice, realtimeVoice.active, realtimeVoice.recording, realtimeVoice.status, isAvatarSpeaking, isLoading]);
-
-    const getSupportedAudioMimeType = () => {
-        if (!window.MediaRecorder) return '';
-        const candidates = [
-            'audio/webm;codecs=opus',
-            'audio/webm',
-            'audio/ogg;codecs=opus',
-            'audio/mp4',
-        ];
-        return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || '';
-    };
-
-    const cleanupRecordingStream = () => {
-        if (vadFrameRef.current) {
-            cancelAnimationFrame(vadFrameRef.current);
-            vadFrameRef.current = null;
-        }
-        if (audioContextRef.current) {
-            audioContextRef.current.close().catch(() => { });
-            audioContextRef.current = null;
-        }
-        analyserRef.current = null;
-        recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
-        recordingStreamRef.current = null;
-    };
-
-    const startVadMonitor = (stream) => {
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (!AudioContext) return;
-
-        const audioContext = new AudioContext();
-        const source = audioContext.createMediaStreamSource(stream);
-        const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 1024;
-        source.connect(analyser);
-
-        audioContextRef.current = audioContext;
-        analyserRef.current = analyser;
-        speechDetectedRef.current = false;
-        silenceStartedAtRef.current = null;
-        recordingStartedAtRef.current = performance.now();
-
-        const samples = new Uint8Array(analyser.fftSize);
-        const speechThreshold = 0.028;
-        const silenceMs = 850;
-        const minRecordingMs = 500;
-        const maxRecordingMs = 15000;
-
-        const tick = () => {
-            if (mediaRecorderRef.current?.state !== 'recording') return;
-
-            analyser.getByteTimeDomainData(samples);
-            let sum = 0;
-            for (let i = 0; i < samples.length; i++) {
-                const normalized = (samples[i] - 128) / 128;
-                sum += normalized * normalized;
-            }
-
-            const rms = Math.sqrt(sum / samples.length);
-            const now = performance.now();
-            const elapsed = now - recordingStartedAtRef.current;
-
-            if (rms > speechThreshold) {
-                speechDetectedRef.current = true;
-                silenceStartedAtRef.current = null;
-                setInput('Listening...');
-            } else if (speechDetectedRef.current) {
-                if (!silenceStartedAtRef.current) {
-                    silenceStartedAtRef.current = now;
-                }
-
-                if (elapsed > minRecordingMs && now - silenceStartedAtRef.current > silenceMs) {
-                    stopRecording();
-                    return;
-                }
-            }
-
-            if (elapsed > maxRecordingMs) {
-                stopRecording();
-                return;
-            }
-
-            vadFrameRef.current = requestAnimationFrame(tick);
-        };
-
-        vadFrameRef.current = requestAnimationFrame(tick);
-    };
-
-    const sendRecordedAudio = async (blob) => {
-        setIsTranscribing(true);
-        setInput('Transcribing...');
-
-        try {
-            const token = import.meta.env.VITE_API_TOKEN || localStorage.getItem('token');
-            const formData = new FormData();
-            const extension = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('mp4') ? 'm4a' : 'webm';
-            formData.append('audio', blob, `voice-input.${extension}`);
-
-            const response = await fetch(apiUrl('/ai/voice'), {
-                method: 'POST',
-                headers: {
-                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                },
-                body: formData,
-            });
-
-            if (!response.ok) throw new Error(`Server returned ${response.status}`);
-
-            const data = await response.json();
-
-            if (data.text) {
-                setInput('');
-                setIschatting(true);
-                sendMessage(data.text);
-            } else {
-                console.log('No speech transcribed:', data.message);
-                setInput('');
-                setVoiceModeActive(false);
-            }
-        } catch (err) {
-            console.error('Error transcribing voice:', err);
-            setInput('');
-            setVoiceModeActive(false);
-        } finally {
-            setIsTranscribing(false);
-        }
-    };
-
-    const stopRecording = (discard = false) => {
-        discardRecordingRef.current = discard;
-        if (mediaRecorderRef.current?.state === 'recording') {
-            setInput(discard ? '' : 'Transcribing...');
-            mediaRecorderRef.current.stop();
-        }
-    };
-
-    const startRecording = async () => {
-        if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-            console.error('Browser voice recording is not supported.');
-            setInput('');
-            return;
-        }
-
-        if (isLoadingRef.current || speechBusyRef.current || isAvatarSpeaking) {
-            return;
-        }
-
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true,
-                },
-            });
-            recordingStreamRef.current = stream;
-            audioChunksRef.current = [];
-            discardRecordingRef.current = false;
-
-            const mimeType = getSupportedAudioMimeType();
-            const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-
-            recorder.ondataavailable = (event) => {
-                if (event.data?.size > 0) {
-                    audioChunksRef.current.push(event.data);
-                }
-            };
-
-            recorder.onstop = async () => {
-                const blob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' });
-                const shouldDiscard = discardRecordingRef.current;
-                const heardSpeech = speechDetectedRef.current;
-                cleanupRecordingStream();
-                mediaRecorderRef.current = null;
-                setIsRecording(false);
-
-                if (shouldDiscard) {
-                    setInput('');
-                    return;
-                }
-
-                if (!heardSpeech || blob.size < 100) {
-                    setInput('');
-                    setVoiceModeActive(false);
-                    return;
-                }
-
-                await sendRecordedAudio(blob);
-            };
-
-            mediaRecorderRef.current = recorder;
-            recorder.start(250);
-            startVadMonitor(stream);
-            setIsRecording(true);
-            setInput('Listening...');
-        } catch (err) {
-            cleanupRecordingStream();
-            setIsRecording(false);
-            setInput('');
-            console.error('Could not start voice recording:', err);
-        }
-    };
-
-    const handleMicToggle = async () => {
-        if (realtimeVoice.active) {
-            realtimeVoice.stop();
-            stopCurrentAvatarSpeech();
-            return;
-        }
-
-        if (fastRtcVoice.active) {
-            fastRtcVoice.stop();
-        }
-
-        await realtimeVoice.start();
-    };
-
-    const handleFastRtcToggle = async () => {
+    const handleVoiceToggle = async () => {
         if (fastRtcVoice.active) {
             fastRtcVoice.stop();
             stopCurrentAvatarSpeech();
             return;
-        }
-
-        if (realtimeVoice.active) {
-            realtimeVoice.stop();
         }
 
         stopCurrentAvatarSpeech();
         setIschatting(true);
         await fastRtcVoice.start();
     };
-
-    useEffect(() => {
-        if (!voiceModeActive) return;
-        if (isRecording || isTranscribing || isLoading || isAvatarSpeaking || speechBusyRef.current) return;
-
-        const timer = setTimeout(() => {
-            if (voiceModeActiveRef.current) {
-                startRecording();
-            }
-        }, 450);
-
-        return () => clearTimeout(timer);
-    }, [voiceModeActive, isRecording, isTranscribing, isLoading, isAvatarSpeaking]);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -672,14 +330,14 @@ const AvatarPage = () => {
     }, [messages, isLoading, issoundon]);
 
     useEffect(() => {
-        if (realtimeVoice.recording || (fastRtcVoice.active && ['listening', 'connecting', 'connected'].includes(fastRtcVoice.status))) {
+        if (fastRtcVoice.active && ['listening', 'connecting', 'connected', 'speaking'].includes(fastRtcVoice.status)) {
             setCurrentEmotion("listen");
         } else if (isAvatarSpeaking) {
             return;
-        } else if (isLoading || ['transcribing', 'thinking', 'synthesizing'].includes(realtimeVoice.status)) {
+        } else if (isLoading) {
             setCurrentEmotion("think");
         }
-    }, [realtimeVoice.recording, realtimeVoice.status, fastRtcVoice.active, fastRtcVoice.status, isLoading, isAvatarSpeaking]);
+    }, [fastRtcVoice.active, fastRtcVoice.status, isLoading, isAvatarSpeaking]);
 
     const handleSpeechStart = () => {
         speechBusyRef.current = true;
@@ -693,9 +351,7 @@ const AvatarPage = () => {
         setIsAvatarSpeaking(false);
         setCurrentEmotion("natural");
         setTimeout(() => {
-            if (speechPayloadQueueRef.current.length > 0 && soundOnRef.current) {
-                playNextSpeechPayload();
-            } else if (speechQueueRef.current.length > 0 && soundOnRef.current) {
+            if (speechQueueRef.current.length > 0 && soundOnRef.current) {
                 playNextSpeechSegment();
             }
         }, 80);
@@ -711,25 +367,13 @@ const AvatarPage = () => {
         setInput('');
     };
 
-    const handleSpeaking = () => {
-        if (!speechText.trim()) return;
-        if (!issoundon) return;
-        setCallavatar(true)
-        setIschatting(true)
-        setText(speechText)
-        // Trigger viseme playback by incrementing counter
-        setSpeakTrigger(prev => prev + 1)
-    }
-
     const handleSoundToggle = () => {
         setIssoundon((current) => {
             const next = !current;
             if (!next) {
                 speechQueueRef.current = [];
-                speechPayloadQueueRef.current = [];
                 speechBusyRef.current = false;
                 setText('');
-                setSpeechPayload(null);
                 setIsAvatarSpeaking(false);
                 setStopSpeechTrigger(prev => prev + 1);
                 setShowLatestMessage(true);
@@ -791,8 +435,6 @@ const AvatarPage = () => {
                         ismale={ismale}
                         text={text ? text : ""}
                         speakTrigger={speakTrigger}
-                        speechPayload={speechPayload}
-                        speechPayloadTrigger={speechPayloadTrigger}
                         stopSpeechTrigger={stopSpeechTrigger}
                         externalAudioStream={fastRtcVoice.remoteStream}
                         onSpeechStart={handleSpeechStart}
@@ -805,73 +447,23 @@ const AvatarPage = () => {
                 </Canvas>
                 <audio ref={fastRtcAudioRef} autoPlay playsInline className="hidden" />
 
-                {/* Speech Input Section - Independent from Chat */}
-                {/* <div className='absolute flex flex-col items-center w-full gap-3 z-10 bottom-20 px-4'>
-                    <div className='w-full max-w-md bg-black/40 backdrop-blur-xl border border-emerald-500/30 rounded-2xl p-3 shadow-xl'>
-                        <div className='flex items-center gap-2'>
-                            <select
-                                value={currentEmotion}
-                                onChange={(e) => setCurrentEmotion(e.target.value)}
-                                className="bg-black/50 text-white border border-emerald-500/30 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
-                            >
-                                {emotions.map((name) => (
-                                    <option key={name} value={name}>{name}</option>
-                                ))}
-                            </select>
-                            <input
-                                type="text"
-                                value={speechText}
-                                onChange={(e) => {
-                                    setSpeechText(e.target.value);
-                                }}
-                                onKeyPress={(e) => {
-                                    if (e.key === 'Enter' && speechText.trim()) {
-                                        handleSpeaking();
-                                    }
-                                }}
-                                placeholder="Type text for avatar to speak..."
-                                className="flex-1 bg-transparent border-none text-white placeholder-gray-400 py-2 px-3 focus:outline-none text-sm"
-                            />
-                            <button
-                                onClick={handleSpeaking}
-                                disabled={!speechText.trim()}
-                                className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${speechText.trim()
-                                    ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:scale-105'
-                                    : 'bg-white/5 text-gray-600 cursor-not-allowed border border-white/10'
-                                    }`}
-                            >
-                                <Speech size={18} />
-                            </button>
-                        </div>
-                    </div>
-                </div> */}
-
                 <div className='absolute flex justify-center w-full gap-10 z-10 bottom-4 border-t pt-4 border-white/10'>
-                    <div
-                        className={`rounded-full w-fit p-3 cursor-pointer transition-all duration-300 ${realtimeVoice.recording ? 'bg-red-500 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.5)]' : realtimeVoice.active ? 'bg-emerald-500 ring-2 ring-emerald-300/60' : 'bg-emerald-500'}`}
-                        onClick={handleMicToggle}
-                        title={realtimeVoice.active ? "Stop realtime voice mode" : "Start realtime voice mode"}
-                    >
-                        {['transcribing', 'thinking', 'synthesizing'].includes(realtimeVoice.status)
-                            ? <Loader2 size={20} className="text-white animate-spin" />
-                            : (realtimeVoice.active ? <MicOff size={20} className="text-white" /> : <Mic size={20} className="text-white" />)}
-                    </div>
                     <button
                         type="button"
                         disabled={!fastRtcVoice.ready && !fastRtcVoice.active}
                         className={`rounded-full w-fit p-3 transition-all duration-300 ${fastRtcVoice.active
-                            ? 'bg-blue-500 ring-2 ring-blue-300/60'
+                            ? 'bg-emerald-500 ring-2 ring-emerald-300/60'
                             : fastRtcVoice.ready
-                                ? 'bg-cyan-500 hover:shadow-[0_0_18px_rgba(34,211,238,0.35)]'
+                                ? 'bg-emerald-500 hover:shadow-[0_0_18px_rgba(16,185,129,0.4)]'
                                 : 'bg-white/10 border border-white/10 text-gray-500 cursor-not-allowed'
                         }`}
-                        onClick={handleFastRtcToggle}
+                        onClick={handleVoiceToggle}
                         title={fastRtcTitle}
                         aria-label={fastRtcTitle}
                     >
                         {fastRtcVoice.status === 'connecting'
                             ? <Loader2 size={20} className="text-white animate-spin" />
-                            : <Radio size={20} className={fastRtcVoice.ready || fastRtcVoice.active ? 'text-white' : 'text-gray-500'} />}
+                            : (fastRtcVoice.active ? <MicOff size={20} className="text-white" /> : <Mic size={20} className={fastRtcVoice.ready ? 'text-white' : 'text-gray-500'} />)}
                     </button>
                     <div
                         className={`${issoundon ? 'bg-emerald-500' : 'bg-white/10 border border-white/10'} rounded-full p-3 cursor-pointer transition-all`}
@@ -881,14 +473,6 @@ const AvatarPage = () => {
 
                         {!issoundon ? <VolumeOff size={20} /> : <Volume2 size={20} />}
                     </div>
-                    {/* 
-                    Chat Button
-                    remove this button after integrating the voice feature this was added just to test the zoom effect 
-                    */}
-                    {/* <div className='bg-emerald-500 rounded-full p-3'
-                        onClick={() => setIschatting(!ischatting)}>
-                        <MessageSquare size={20} />
-                    </div> */}
                 </div>
             </div>
             {/* Chat Component*/}
@@ -925,14 +509,14 @@ const AvatarPage = () => {
                                                 }}
                                                 placeholder="Start your request, and let FinWise handle everything"
                                                 className="w-full bg-transparent border-none text-white placeholder-gray-500 py-3 focus:outline-none text-sm"
-                                                disabled={isLoading || realtimeVoice.active || fastRtcVoice.active}
+                                                disabled={isLoading || fastRtcVoice.active}
                                             />
                                         </div>
 
                                         <button
                                             type="submit"
-                                            disabled={!input.trim() || isLoading || realtimeVoice.active || fastRtcVoice.active}
-                                            className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${input.trim() && !isLoading && !realtimeVoice.active && !fastRtcVoice.active
+                                            disabled={!input.trim() || isLoading || fastRtcVoice.active}
+                                            className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${input.trim() && !isLoading && !fastRtcVoice.active
                                                 ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:scale-105'
                                                 : 'bg-white/5 text-gray-600 cursor-not-allowed border border-white/10'
                                                 }`}
@@ -1020,7 +604,7 @@ const AvatarPage = () => {
                                                 }}
                                                 placeholder="Start your request, and let FinWise handle everything"
                                                 className="w-full bg-transparent border-none text-white placeholder-gray-500 py-3 focus:outline-none text-sm"
-                                                disabled={isLoading || realtimeVoice.active || fastRtcVoice.active}
+                                                disabled={isLoading || fastRtcVoice.active}
                                             />
                                         </div>
 
@@ -1028,8 +612,8 @@ const AvatarPage = () => {
                                         <div className="flex items-center gap-2 pr-2">
                                             <button
                                                 type="submit"
-                                                disabled={!input.trim() || isLoading || realtimeVoice.active || fastRtcVoice.active}
-                                                className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${input.trim() && !isLoading && !realtimeVoice.active && !fastRtcVoice.active
+                                                disabled={!input.trim() || isLoading || fastRtcVoice.active}
+                                                className={`p-2.5 rounded-xl transition-all duration-300 flex items-center justify-center ${input.trim() && !isLoading && !fastRtcVoice.active
                                                     ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:scale-105'
                                                     : 'bg-white/5 text-gray-600 cursor-not-allowed border border-white/10'
                                                     }`}
