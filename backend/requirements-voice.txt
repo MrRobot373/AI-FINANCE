@@ -1,13 +1,27 @@
-# Optional realtime voice stack inspired by jesuscopado/local-voice-ai-agent.
-# Uses FastRTC for WebRTC/VAD/Moonshine STT and the existing Piper TTS stack.
-fastrtc[vad,stt]==0.0.34
+# Avatar realtime transport.
+# The actual speech pipeline is asiff00/On-Device-Speech-to-Speech-Conversational-AI:
+# Pyannote VAD -> Whisper tiny.en -> Ollama stream -> TextChunker/AudioGenerationQueue -> Kokoro.
+fastrtc==0.0.34
 
-# Optional GPU acceleration for Moonshine ONNX on Windows/NVIDIA.
-# Install manually only if your CUDA/cuDNN versions match onnxruntime-gpu.
-# onnxruntime-gpu>=1.20.1
+# Attached on-device speech-to-speech pipeline dependencies used by the backend handler.
+numpy==1.26.4
+transformers==4.57.6
+pyannote.audio==3.3.2
+torch==2.4.1
+torchaudio==2.4.1
+phonemizer
+soundfile
+sounddevice
+pyaudio
+munch
+pydantic-settings
 
-# Optional Kokoro TTS mode:
-# Kokoro currently requires numpy >=2, while this project pins LangChain/Chroma
-# to numpy <2 on Python 3.11. Use Kokoro only in a separate voice environment,
-# then set FASTRTC_TTS_MODEL=kokoro.
-# kokoro-onnx==0.5.0
+# Keep the OpenTelemetry set compatible with existing FastAPI instrumentation.
+opentelemetry-api==1.41.1
+opentelemetry-sdk==1.41.1
+opentelemetry-semantic-conventions==0.62b1
+opentelemetry-exporter-otlp==1.41.1
+opentelemetry-exporter-otlp-proto-common==1.41.1
+opentelemetry-exporter-otlp-proto-grpc==1.41.1
+opentelemetry-exporter-otlp-proto-http==1.41.1
+opentelemetry-proto==1.41.1
