@@ -339,6 +339,36 @@ function Avatar({ model, handpos, ischatting, text,
     }, [emotions, currentEmotion]);
 
     useEffect(() => {
+        headMesh.current = null;
+        teethMesh.current = null;
+        let bestHeadCandidate = null;
+        let bestHeadScore = -1;
+        let bestTeethCandidate = null;
+        let bestTeethScore = -1;
+
+        const scoreHeadMesh = (obj) => {
+            const name = obj.name?.toLowerCase() || '';
+            const keys = Object.keys(obj.morphTargetDictionary || {}).map((key) => key.toLowerCase());
+            let score = 0;
+            if (name.includes('head')) score += 100;
+            if (name.includes('eye')) score -= 50;
+            if (keys.some((key) => key.includes('mouthopen'))) score += 20;
+            if (keys.some((key) => key.includes('lips_open'))) score += 20;
+            if (keys.some((key) => key.includes('lips_round'))) score += 10;
+            if (keys.some((key) => key.includes('blink'))) score += 5;
+            return score;
+        };
+
+        const scoreTeethMesh = (obj) => {
+            const name = obj.name?.toLowerCase() || '';
+            const keys = Object.keys(obj.morphTargetDictionary || {}).map((key) => key.toLowerCase());
+            let score = 0;
+            if (name.includes('teeth')) score += 100;
+            if (keys.some((key) => key.includes('teethtongue'))) score += 25;
+            if (keys.some((key) => key.includes('tongue'))) score += 10;
+            return score;
+        };
+
         scene.traverse((obj) => {
             if (obj.isMesh) {
                 console.log("Mesh: ", obj.name)
@@ -347,13 +377,16 @@ function Avatar({ model, handpos, ischatting, text,
                 console.log("Bone: ", obj.name)
             }
             if (obj.isMesh && obj.morphTargetDictionary) {
-
-                if (obj.name === "Wolf3D_Head") {
-                    headMesh.current = obj;
-                    // obj.visible = false;
+                const headScore = scoreHeadMesh(obj);
+                if (headScore > bestHeadScore) {
+                    bestHeadScore = headScore;
+                    bestHeadCandidate = obj;
                 }
-                if (obj.name === "Wolf3D_Teeth") {
-                    teethMesh.current = obj;
+
+                const teethScore = scoreTeethMesh(obj);
+                if (teethScore > bestTeethScore) {
+                    bestTeethScore = teethScore;
+                    bestTeethCandidate = obj;
                 }
             }
             // Capture the specific bone for eyelids
@@ -394,6 +427,15 @@ function Avatar({ model, handpos, ischatting, text,
             if (obj.isBone && obj.name === "LeftHandPinky4") {
                 leftpinky4.current = obj;
             }
+        });
+
+        headMesh.current = bestHeadCandidate;
+        teethMesh.current = bestTeethCandidate;
+        console.log("Lip-sync mesh capture:", {
+            head: headMesh.current?.name || "NOT FOUND",
+            headKeys: Object.keys(headMesh.current?.morphTargetDictionary || {}),
+            teeth: teethMesh.current?.name || "NOT FOUND",
+            teethKeys: Object.keys(teethMesh.current?.morphTargetDictionary || {}),
         });
 
         // Verify what we captured after traversal
@@ -493,9 +535,11 @@ function Avatar({ model, handpos, ischatting, text,
         }
 
         return () => {
-            stopLipSync();
+            if (!externalAudioStream) {
+                stopLipSync();
+            }
         };
-    }, [speakTrigger, text, speak, stopLipSync, ismale, soundEnabled]);
+    }, [speakTrigger, text, speak, stopLipSync, ismale, soundEnabled, externalAudioStream]);
 
     useEffect(() => {
         if (!soundEnabled || !externalAudioStream) {
@@ -530,11 +574,12 @@ function Avatar({ model, handpos, ischatting, text,
 
     // Stop lip sync and audio when text is cleared
     useEffect(() => {
+        if (externalAudioStream) return;
         if (!text || text.trim() === '') {
             stopLipSync();
             stopSpeaking(); // Stop any legacy global audio if necessary
         }
-    }, [text, stopLipSync]);
+    }, [text, stopLipSync, externalAudioStream]);
 
 
     // This Function Contorls how The model is adjusted when he is talking

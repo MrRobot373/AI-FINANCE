@@ -36,6 +36,21 @@ On-device speech-to-speech pipeline
 - Removed the previous Moonshine/Piper-style backend voice path from the active avatar flow.
 - Pinned voice dependencies to avoid NumPy 2 compatibility issues, including numpy==1.26.4, pyannote.audio==3.3.2, torch==2.4.1, torchaudio==2.4.1, and matching transformer/audio packages.
 
+Bob avatar voice update
+- Removed the previous asiff00/Pyannote/Whisper-transformers/TextChunker/Supertonic FastRTC voice runtime from the active avatar path.
+- Replaced it with a direct Bob-style runtime based on OminousIndustries/Bob.
+- The active browser avatar voice path now uses FastRTC WebRTC transport with Bob's core stack: RMS silence detection, Faster-Whisper tiny.en, Ollama qwen2.5:0.5b, and Kokoro KPipeline voice af_heart.
+- Added Bob configuration for VAD thresholds, Whisper device/compute settings, Ollama response options, Kokoro voice, speed, and output sample rate.
+- Kept FastRTC only as the browser transport so the existing web avatar can still receive microphone audio from the browser.
+- Enabled GPU mode for Bob by using CUDA Faster-Whisper with float16 and CUDA Kokoro TTS.
+- Replaced the CPU PyTorch install with CUDA PyTorch/torchaudio 2.11.0+cu128 for the RTX 5050 Laptop GPU.
+- Added readable voice chat text inside the right-side avatar chat panel so browser voice transcripts and assistant replies appear as chat bubbles while audio plays.
+- Hooked avatar gender to Kokoro voice selection: male avatar uses am_adam and female avatar uses af_heart during FastRTC voice chat.
+- Fixed FastRTC avatar lip-sync so the live remote audio stream is not stopped by empty text input cleanup and drives mouth/jaw morphs from a stronger realtime audio envelope.
+- Fixed female avatar lip-sync by selecting the active head/teeth morph meshes by capability and resolving morph target aliases across male and female GLB naming differences.
+- Updated avatar prompts so both realtime voice and normal avatar chat stay focused on banking, personal finance, Indian rupees, and safe financial guidance.
+- Improved avatar STT by upgrading Faster-Whisper from tiny.en to small.en, using beam size 3, disabling previous-text conditioning for independent voice turns, and adding finance/banking hotwords.
+
 Verification completed
 - Ran npm run build successfully.
 - Ran pip check successfully after dependency pinning.

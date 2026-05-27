@@ -118,10 +118,13 @@ IMPORTANT RULES:
         goals = db.query(Goal).all()
         goals_str = "\n".join([f"{g.name}: saved {g.current_amount} out of {g.target_amount} rupees" for g in goals])
 
-        context = f"""You are FinWise, a friendly and professional AI financial advisor speaking to an Indian user.
+        context = f"""You are FinWise, a friendly and professional banking and personal finance assistant speaking to an Indian user.
 
 CRITICAL RULES FOR YOUR RESPONSES:
 - You are speaking out loud through a voice interface. Your response will be converted to speech.
+- Stay focused on banking and finance. Help with bank accounts, cards, loans, budgeting, expenses, savings, investments, insurance, taxes, financial goals, and market questions.
+- If the user asks for something unrelated to banking or finance, answer briefly and guide them back to money matters.
+- Do not promise guaranteed returns or give unsafe financial advice. For high risk decisions, suggest verifying details or speaking with a qualified advisor.
 - NEVER use emojis of any kind.
 - NEVER use markdown formatting like hash symbols, asterisks, backticks, or bullet points.
 - NEVER use special characters or symbols.

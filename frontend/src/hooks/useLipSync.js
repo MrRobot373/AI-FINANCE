@@ -8,6 +8,39 @@ import { createVisemeTimeline, backendVisemesToTimeline, groupedVisemesToTimelin
 import { textToAudioVisemesAPI } from '../utils/visemeUtils';
 import { clampMorphInfluence } from '../utils/morphUtils';
 
+const normalizeMorphKey = (key = '') => String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const MORPH_ALIASES = {
+    Lips_Open_Wide: ['Lips_Open_wide', 'Lips_OpenWide'],
+    Lips_Corner_Up: ['Lip_Corner_Up', 'LipsCornerUp'],
+    TeethTongue_TipUp: ['TeethTongue _TipUP', 'TeethTongue_TipUP', 'Teethtongue_TipUp'],
+    TeethTongue_Bite: ['Teethtongue_Bite', 'TeethTongue_Bite'],
+};
+
+const getMorphIndex = (dict, key) => {
+    if (!dict) return undefined;
+    if (dict[key] !== undefined) return dict[key];
+
+    const aliases = MORPH_ALIASES[key] || [];
+    for (const alias of aliases) {
+        if (dict[alias] !== undefined) return dict[alias];
+    }
+
+    const normalizedTarget = normalizeMorphKey(key);
+    for (const [candidate, index] of Object.entries(dict)) {
+        if (normalizeMorphKey(candidate) === normalizedTarget) return index;
+    }
+
+    for (const alias of aliases) {
+        const normalizedAlias = normalizeMorphKey(alias);
+        for (const [candidate, index] of Object.entries(dict)) {
+            if (normalizeMorphKey(candidate) === normalizedAlias) return index;
+        }
+    }
+
+    return undefined;
+};
+
 
 /**
  * Hook to manage real-time lip sync animation
@@ -25,6 +58,10 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
     const externalSamplesRef = useRef(null);
     const externalLevelRef = useRef(0);
     const externalActiveRef = useRef(false);
+    const externalNoiseFloorRef = useRef(0.006);
+    const externalSpeakingRef = useRef(false);
+    const externalLastSpeechAtRef = useRef(0);
+    const externalResumeHandlerRef = useRef(null);
     const timelineRef = useRef([]);
     const durationRatio = useRef(1.0);
     const currentEventIndex = useRef(0);
@@ -68,9 +105,12 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
         if (!hDict || !hInfl) return;
 
         ALL_SHAPE_KEYS.forEach(key => {
-            if (hDict && hDict[key] !== undefined) hInfl[hDict[key]] = 0;
-            if (tDict && tInfl && tDict[key] !== undefined) {
-                tInfl[tDict[key]] = 0;
+            const headIndex = getMorphIndex(hDict, key);
+            if (headIndex !== undefined) hInfl[headIndex] = 0;
+
+            const teethIndex = getMorphIndex(tDict, key);
+            if (tInfl && teethIndex !== undefined) {
+                tInfl[teethIndex] = 0;
             }
         });
     }, [headMeshRef, teethMeshRef]);
@@ -92,12 +132,20 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
     }, [resetMorphTargets]);
 
     const stopExternalAudioStream = useCallback(() => {
+        const shouldNotifyEnd = externalSpeakingRef.current;
+        if (externalResumeHandlerRef.current) {
+            window.removeEventListener('pointerdown', externalResumeHandlerRef.current);
+            externalResumeHandlerRef.current = null;
+        }
         externalSourceRef.current?.disconnect();
         externalSourceRef.current = null;
         externalAnalyserRef.current = null;
         externalSamplesRef.current = null;
         externalLevelRef.current = 0;
         externalActiveRef.current = false;
+        externalNoiseFloorRef.current = 0.006;
+        externalSpeakingRef.current = false;
+        externalLastSpeechAtRef.current = 0;
 
         if (externalAudioContextRef.current) {
             externalAudioContextRef.current.close().catch(() => { });
@@ -107,6 +155,7 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
         setIsPlaying(false);
         isPlayingRef.current = false;
         resetMorphTargets();
+        if (shouldNotifyEnd && onEndRef.current) onEndRef.current();
     }, [resetMorphTargets]);
 
     const bindExternalAudioStream = useCallback(async (stream) => {
@@ -120,10 +169,18 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
         if (audioContext.state === 'suspended') {
             await audioContext.resume();
         }
+        const resumeContext = () => {
+            if (audioContext.state === 'suspended') {
+                audioContext.resume().catch(() => { });
+            }
+        };
+        externalResumeHandlerRef.current = resumeContext;
+        window.addEventListener('pointerdown', resumeContext, { once: true });
 
         const source = audioContext.createMediaStreamSource(stream);
         const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 1024;
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.35;
         source.connect(analyser);
 
         externalAudioContextRef.current = audioContext;
@@ -132,6 +189,9 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
         externalSamplesRef.current = new Uint8Array(analyser.fftSize);
         externalActiveRef.current = true;
         externalLevelRef.current = 0;
+        externalNoiseFloorRef.current = 0.006;
+        externalSpeakingRef.current = false;
+        externalLastSpeechAtRef.current = performance.now() / 1000;
         setIsPlaying(true);
         isPlayingRef.current = true;
     }, [stopExternalAudioStream]);
@@ -368,33 +428,68 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
             externalAnalyserRef.current.getByteTimeDomainData(externalSamplesRef.current);
 
             let sum = 0;
+            let peak = 0;
             for (let i = 0; i < externalSamplesRef.current.length; i += 1) {
                 const normalized = (externalSamplesRef.current[i] - 128) / 128;
+                peak = Math.max(peak, Math.abs(normalized));
                 sum += normalized * normalized;
             }
 
             const rms = Math.sqrt(sum / externalSamplesRef.current.length);
-            const targetLevel = Math.min(1, Math.max(0, (rms - 0.012) * 14));
-            const blend = Math.min(Math.max(delta * 18, 0), 1);
+            const floorBlend = rms < externalNoiseFloorRef.current * 1.7 ? 0.04 : 0.004;
+            externalNoiseFloorRef.current = MathUtils.lerp(
+                externalNoiseFloorRef.current,
+                Math.min(rms, 0.035),
+                floorBlend
+            );
+
+            const gate = Math.max(0.004, externalNoiseFloorRef.current * 1.35);
+            const rmsLevel = Math.max(0, (rms - gate) * 38);
+            const peakLevel = Math.max(0, (peak - gate * 1.6) * 4.2);
+            const targetLevel = Math.min(1, Math.max(rmsLevel, peakLevel));
+            const attack = targetLevel > externalLevelRef.current ? 30 : 12;
+            const blend = Math.min(Math.max(delta * attack, 0), 1);
             externalLevelRef.current = MathUtils.lerp(externalLevelRef.current, targetLevel, blend);
 
-            const apply = (key, value) => {
-                if (hDict[key] !== undefined) {
-                    const current = Number(hInfl[hDict[key]]) || 0;
-                    hInfl[hDict[key]] = clampMorphInfluence(MathUtils.lerp(current, value, blend));
+            const now = performance.now() / 1000;
+            if (externalLevelRef.current > 0.08) {
+                externalLastSpeechAtRef.current = now;
+                if (!externalSpeakingRef.current) {
+                    externalSpeakingRef.current = true;
+                    if (onStartRef.current) onStartRef.current();
                 }
-                if (tDict && tInfl && tDict[key] !== undefined) {
-                    const currentT = Number(tInfl[tDict[key]]) || 0;
-                    tInfl[tDict[key]] = clampMorphInfluence(MathUtils.lerp(currentT, value, blend));
+            } else if (externalSpeakingRef.current && now - externalLastSpeechAtRef.current > 0.35) {
+                externalSpeakingRef.current = false;
+                if (onEndRef.current) onEndRef.current();
+            }
+
+            const apply = (key, value) => {
+                const headIndex = getMorphIndex(hDict, key);
+                if (headIndex !== undefined) {
+                    const current = Number(hInfl[headIndex]) || 0;
+                    hInfl[headIndex] = clampMorphInfluence(MathUtils.lerp(current, value, blend));
+                }
+
+                const teethIndex = getMorphIndex(tDict, key);
+                if (tInfl && teethIndex !== undefined) {
+                    const currentT = Number(tInfl[teethIndex]) || 0;
+                    tInfl[teethIndex] = clampMorphInfluence(MathUtils.lerp(currentT, value, blend));
                 }
             };
 
             ALL_SHAPE_KEYS.forEach((key) => apply(key, 0));
-            apply('Lips_Open_Wide', externalLevelRef.current * 0.9);
-            apply('TeethTongue_Open', externalLevelRef.current);
-            apply('Lips_Wide', externalLevelRef.current * 0.25);
-            apply('mouthOpen', externalLevelRef.current);
-            apply('jawOpen', externalLevelRef.current * 0.8);
+            const level = externalLevelRef.current;
+            const wide = Math.min(0.35, level * 0.28);
+            const round = Math.max(0, Math.sin(now * 16) * 0.12 * level);
+            apply('Lips_Open_Wide', level * 0.95);
+            apply('TeethTongue_Open', level);
+            apply('Lips_Wide', wide);
+            apply('Lips_Round', round);
+            apply('Lips_Protude', round * 0.7);
+            apply('mouthOpen', level);
+            apply('jawOpen', level * 0.85);
+            apply('mouthFunnel', round * 0.8);
+            apply('mouthPucker', round * 0.55);
             return;
         }
 
@@ -512,13 +607,16 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
         ALL_SHAPE_KEYS.forEach(key => {
             const target = Math.max(0, Math.min(1, targetWeights[key] || 0));
 
-            if (hDict[key] !== undefined) {
-                const current = Number(hInfl[hDict[key]]) || 0;
-                hInfl[hDict[key]] = clampMorphInfluence(MathUtils.lerp(current, target, LERP_SPEED));
+            const headIndex = getMorphIndex(hDict, key);
+            if (headIndex !== undefined) {
+                const current = Number(hInfl[headIndex]) || 0;
+                hInfl[headIndex] = clampMorphInfluence(MathUtils.lerp(current, target, LERP_SPEED));
             }
-            if (tDict && tInfl && tDict[key] !== undefined) {
-                const currentT = Number(tInfl[tDict[key]]) || 0;
-                tInfl[tDict[key]] = clampMorphInfluence(MathUtils.lerp(currentT, target, LERP_SPEED));
+
+            const teethIndex = getMorphIndex(tDict, key);
+            if (tInfl && teethIndex !== undefined) {
+                const currentT = Number(tInfl[teethIndex]) || 0;
+                tInfl[teethIndex] = clampMorphInfluence(MathUtils.lerp(currentT, target, LERP_SPEED));
             }
         });
 

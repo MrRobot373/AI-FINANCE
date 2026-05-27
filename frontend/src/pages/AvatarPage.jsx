@@ -135,6 +135,7 @@ const AvatarPage = () => {
     const fastRtcAudioRef = useRef(null);
     const voiceToggleInFlightRef = useRef(false);
     const suppressVoiceClickRef = useRef(false);
+    const voiceTranscriptEndRef = useRef(null);
 
     useEffect(() => {
         isLoadingRef.current = isLoading;
@@ -155,6 +156,14 @@ const AvatarPage = () => {
     };
 
     const fastRtcVoice = useFastRtcVoice();
+
+    useEffect(() => {
+        fastRtcVoice.setAvatarVoice({ gender: ismale ? 'male' : 'female' });
+    }, [fastRtcVoice.setAvatarVoice, ismale]);
+
+    useEffect(() => {
+        voiceTranscriptEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, [fastRtcVoice.conversation]);
 
     useEffect(() => {
         const audio = fastRtcAudioRef.current;
@@ -207,7 +216,7 @@ const AvatarPage = () => {
 
             stopCurrentAvatarSpeech();
             setIschatting(true);
-            await fastRtcVoice.start();
+            await fastRtcVoice.start({ gender: ismale ? 'male' : 'female' });
         } finally {
             voiceToggleInFlightRef.current = false;
         }
@@ -428,6 +437,13 @@ const AvatarPage = () => {
         closed: 'Voice stopped',
         unavailable: 'Voice unavailable',
     }[fastRtcVoice.status];
+    const voiceConversation = fastRtcVoice.conversation || [];
+    const hasVoiceConversation = voiceConversation.length > 0;
+    const hasVoiceActivity = fastRtcVoice.active || hasVoiceConversation || Boolean(fastRtcVoice.error);
+    const showIdleVoicePanel = !ischatting && messages.length === 0 && fastRtcVoice.ready;
+    const showVoiceChatPanel = hasVoiceActivity || showIdleVoicePanel;
+    const shouldShowChatPane = ischatting || showVoiceChatPanel;
+    const voiceTranscriptPlaceholder = fastRtcStatusText || 'Voice chat ready';
 
     return (
         <div className="min-h-screen bg-[#030303] flex gap-2 relative overflow-hidden">
@@ -537,7 +553,7 @@ const AvatarPage = () => {
                     {/* Subtle inner glow */}
                     <div className="absolute inset-0 bg-gradient-to-b from-emerald-500/5 via-transparent to-transparent pointer-events-none"></div>
                     {/* Conditional Layout based on chatting state */}
-                    {!ischatting ? (
+                    {!shouldShowChatPane ? (
                         /* Initial State - Centered Input */
                         <div className="flex-1 flex flex-col items-center justify-center p-8 relative z-10">
                             {/* Animated Venom Blob */}
@@ -596,6 +612,18 @@ const AvatarPage = () => {
                         <>
                             {/* Messages Area */}
                             <div className="flex-1 overflow-y-auto p-8 space-y-6 scrollbar-hide relative z-10">
+                                {showVoiceChatPanel && (
+                                    <div className="flex items-center justify-between rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100 backdrop-blur-md">
+                                        <div className="flex items-center gap-2 font-medium">
+                                            <Mic size={16} />
+                                            <span>Voice chat</span>
+                                        </div>
+                                        <span className="max-w-[260px] truncate text-xs text-emerald-200/90">
+                                            {fastRtcStatusText || 'Ready'}
+                                        </span>
+                                    </div>
+                                )}
+
                                 {messages.map((msg, idx) => (
                                     <div key={idx} className={`flex gap-4 ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-2 duration-300`}>
                                         {msg.role === 'assistant' && (
@@ -631,6 +659,40 @@ const AvatarPage = () => {
                                     </div>
                                 ))}
 
+                                {showVoiceChatPanel && voiceConversation.length === 0 && (
+                                    <div className="flex gap-4 justify-start">
+                                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-500/20 to-green-600/20 border border-emerald-500/30 flex items-center justify-center shrink-0 mt-1 shadow-lg backdrop-blur-sm">
+                                            <Bot size={18} className="text-emerald-400" />
+                                        </div>
+                                        <div className="max-w-[70%] rounded-2xl border border-white/10 bg-white/5 px-5 py-3.5 text-gray-200 shadow-lg backdrop-blur-md">
+                                            {voiceTranscriptPlaceholder}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {voiceConversation.map((msg) => (
+                                    <div key={msg.id} className={`flex gap-4 ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-2 duration-300`}>
+                                        {msg.role !== 'user' && (
+                                            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-500/20 to-green-600/20 border border-emerald-500/30 flex items-center justify-center shrink-0 mt-1 shadow-lg backdrop-blur-sm">
+                                                <Bot size={18} className="text-emerald-400" />
+                                            </div>
+                                        )}
+
+                                        <div className={`max-w-[70%] rounded-2xl px-5 py-3.5 shadow-lg ${msg.role === 'user'
+                                            ? 'bg-emerald-500/10 text-white border border-emerald-500/20 backdrop-blur-md'
+                                            : 'bg-white/5 text-gray-200 border border-white/10 backdrop-blur-md'
+                                            }`}>
+                                            <p className="whitespace-pre-wrap leading-relaxed text-[15px]">{msg.text}</p>
+                                        </div>
+
+                                        {msg.role === 'user' && (
+                                            <div className="w-9 h-9 rounded-full bg-white/5 border border-white/10 flex items-center justify-center shrink-0 mt-1 shadow-lg backdrop-blur-sm">
+                                                <User size={18} className="text-gray-300" />
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+
                                 {isLoading && !hasPendingAssistant && (
                                     <div className="flex gap-4 justify-start">
                                         <div className="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-500/20 to-green-600/20 border border-emerald-500/30 flex items-center justify-center shrink-0 mt-1 backdrop-blur-sm">
@@ -642,6 +704,7 @@ const AvatarPage = () => {
                                     </div>
                                 )}
                                 <div ref={messagesEndRef} />
+                                <div ref={voiceTranscriptEndRef} />
                             </div>
 
 

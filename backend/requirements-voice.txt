@@ -1,20 +1,17 @@
 # Avatar realtime transport.
-# The actual speech pipeline is asiff00/On-Device-Speech-to-Speech-Conversational-AI:
-# Pyannote VAD -> Whisper tiny.en -> Ollama stream -> TextChunker/AudioGenerationQueue -> Kokoro.
+# The active speech pipeline is based on OminousIndustries/Bob:
+# FastRTC WebRTC -> Bob RMS VAD -> Faster-Whisper -> Ollama -> Kokoro.
 fastrtc==0.0.34
 
-# Attached on-device speech-to-speech pipeline dependencies used by the backend handler.
+# Bob voice pipeline dependencies.
 numpy==1.26.4
-transformers==4.57.6
-pyannote.audio==3.3.2
-torch==2.4.1
-torchaudio==2.4.1
-phonemizer
-soundfile
-sounddevice
-pyaudio
-munch
-pydantic-settings
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+torchaudio==2.11.0+cu128
+faster-whisper
+ollama
+kokoro==0.9.4
+scipy
 
 # Keep the OpenTelemetry set compatible with existing FastAPI instrumentation.
 opentelemetry-api==1.41.1

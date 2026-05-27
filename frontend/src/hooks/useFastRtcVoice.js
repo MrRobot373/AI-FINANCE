@@ -36,6 +36,7 @@ export function useFastRtcVoice() {
     const [error, setError] = useState('');
     const [inputLevel, setInputLevel] = useState(0);
     const [lastEvent, setLastEvent] = useState('');
+    const [conversation, setConversation] = useState([]);
 
     const peerConnectionRef = useRef(null);
     const dataChannelRef = useRef(null);
@@ -45,6 +46,8 @@ export function useFastRtcVoice() {
     const audioContextRef = useRef(null);
     const inputLevelFrameRef = useRef(null);
     const lastInputLevelUpdateRef = useRef(0);
+    const webrtcIdRef = useRef('');
+    const pendingVoiceConfigRef = useRef({ gender: 'female' });
 
     const teardownInputMeter = useCallback(() => {
         if (inputLevelFrameRef.current) {
@@ -109,9 +112,32 @@ export function useFastRtcVoice() {
 
         const type = typeof message === 'object' ? message.type : '';
         const data = typeof message === 'object' ? message.data ?? message.message : message;
-        const eventText = Array.isArray(data) ? data.join(', ') : String(data || '');
+        const eventText = Array.isArray(data)
+            ? data.join(', ')
+            : (typeof data === 'object' && data !== null ? String(data.text || data.event || '') : String(data || ''));
 
         if (type === 'log') {
+            if (typeof data === 'object' && data !== null) {
+                const eventName = data.event || '';
+                if (eventName === 'user_transcript' || eventName === 'assistant_reply') {
+                    const text = String(data.text || '').trim();
+                    if (text) {
+                        setConversation((current) => [
+                            ...current,
+                            {
+                                id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                                role: data.role === 'user' ? 'user' : 'assistant',
+                                text,
+                                event: eventName,
+                            },
+                        ].slice(-8));
+                        setLastEvent(text);
+                    }
+                    if (eventName === 'user_transcript') setStatus('processing');
+                    return;
+                }
+            }
+
             setLastEvent(eventText);
             if (eventText === 'started_talking') setStatus('hearing');
             if (eventText === 'pause_detected') setStatus('processing');
@@ -161,6 +187,7 @@ export function useFastRtcVoice() {
 
         dataChannelRef.current?.close();
         dataChannelRef.current = null;
+        webrtcIdRef.current = '';
         peerConnectionRef.current?.close();
         peerConnectionRef.current = null;
 
@@ -173,8 +200,61 @@ export function useFastRtcVoice() {
         teardownInputMeter();
     }, [teardownInputMeter]);
 
-    const start = useCallback(async () => {
+    const clearConversation = useCallback(() => {
+        setConversation([]);
+    }, []);
+
+    const applyAvatarVoice = useCallback(async (webrtcId, config = {}) => {
+        if (!webrtcId) return false;
+
+        const payload = {
+            webrtc_id: webrtcId,
+            gender: config.gender || 'female',
+        };
+        if (config.voice) payload.voice = config.voice;
+
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+            try {
+                const response = await fetch(apiUrl('/avatar/rtc/voice'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await response.json().catch(() => null);
+                if (response.ok && data?.status === 'ok') {
+                    return true;
+                }
+            } catch (err) {
+                console.warn('FastRTC avatar voice update failed:', err);
+            }
+
+            await new Promise((resolve) => window.setTimeout(resolve, 120 * (attempt + 1)));
+        }
+
+        return false;
+    }, []);
+
+    const setAvatarVoice = useCallback(async (config = {}) => {
+        const nextConfig = {
+            gender: config.gender || pendingVoiceConfigRef.current.gender || 'female',
+            voice: config.voice || undefined,
+        };
+        pendingVoiceConfigRef.current = nextConfig;
+
+        if (!activeRef.current || !webrtcIdRef.current) {
+            return false;
+        }
+
+        return applyAvatarVoice(webrtcIdRef.current, nextConfig);
+    }, [applyAvatarVoice]);
+
+    const start = useCallback(async (voiceConfig = {}) => {
         setError('');
+        const requestedVoiceConfig = {
+            gender: voiceConfig.gender || pendingVoiceConfigRef.current.gender || 'female',
+            voice: voiceConfig.voice || undefined,
+        };
+        pendingVoiceConfigRef.current = requestedVoiceConfig;
         const currentHealth = health || await refreshHealth();
 
         if (!currentHealth?.enabled || !currentHealth?.available || !currentHealth?.mounted) {
@@ -216,6 +296,7 @@ export function useFastRtcVoice() {
             const dataChannel = peerConnection.createDataChannel('finwise-events');
             const nextRemoteStream = new MediaStream();
             const webrtcId = createWebRtcId();
+            webrtcIdRef.current = webrtcId;
 
             dataChannelRef.current = dataChannel;
             dataChannel.onopen = () => {
@@ -286,6 +367,7 @@ export function useFastRtcVoice() {
             }
 
             await peerConnection.setRemoteDescription(answer);
+            await applyAvatarVoice(webrtcId, requestedVoiceConfig);
             setStatus('listening');
             return true;
         } catch (err) {
@@ -294,7 +376,7 @@ export function useFastRtcVoice() {
             setError(err.message || 'FastRTC voice connection failed');
             return false;
         }
-    }, [health, refreshHealth, stop]);
+    }, [applyAvatarVoice, health, refreshHealth, stop]);
 
     useEffect(() => {
         return () => stop();
@@ -310,9 +392,12 @@ export function useFastRtcVoice() {
         remoteStream,
         inputLevel,
         lastEvent,
+        conversation,
         error,
         start,
         stop,
+        setAvatarVoice,
+        clearConversation,
         refreshHealth,
     };
 }
