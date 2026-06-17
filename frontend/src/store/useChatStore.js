@@ -77,18 +77,6 @@ export const useChatStore = create((set, get) => ({
         }
     },
 
-    renameSession: async (sessionId, newTitle) => {
-        try {
-            const { activeSection } = get();
-            const updated = await updateChatSession(sessionId, newTitle, activeSection);
-            set(state => ({
-                sessions: state.sessions.map(s => s.id === sessionId ? updated : s)
-            }));
-        } catch (error) {
-            console.error("Failed to rename session", error);
-        }
-    },
-
     deleteSession: async (sessionId) => {
         try {
             const { activeSection } = get();
@@ -147,7 +135,7 @@ export const useChatStore = create((set, get) => ({
 
         // Create timeout promise
         const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Request timeout after 30 seconds')), 30000);
+            setTimeout(() => reject(new Error('Request timeout after 90 seconds')), 90000);
         });
 
         try {

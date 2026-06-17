@@ -69,7 +69,6 @@ const ChatSidebar = ({ section }) => {
     };
 
     const handleTitleChange = (e) => {
-        console.log('Title changing to:', e.target.value);
         setEditedTitle(e.target.value);
     };
 
@@ -104,8 +103,6 @@ const ChatSidebar = ({ section }) => {
     });
 
     const trainModel = (file) => {
-        console.log('Train model clicked');
-
         fetch('/api/train-model', {
             method: 'POST',
             body: file,

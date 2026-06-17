@@ -2,6 +2,9 @@
 
 A modern, minimalist personal finance application featuring a real-time AI assistant that can track expenses, create goals, and answer financial queries in Indian Rupees (₹).
 
+> 📘 **Setting this up on a PC? Follow the detailed, up-to-date guide in [SETUP.md](SETUP.md).**
+> It covers the GPU/CPU real-time voice avatar, the exact Python 3.11 requirement, Ollama models, eSpeak NG, and full troubleshooting. The quick steps below are a high-level summary.
+
 ![Finance AI Screenshot](https://via.placeholder.com/800x400?text=Finance+AI+Dashboard+Preview)
 
 ## 🚀 Features

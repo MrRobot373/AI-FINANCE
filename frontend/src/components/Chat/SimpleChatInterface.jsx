@@ -132,7 +132,7 @@ const SimpleChatInterface = () => {
                             type="submit"
                             disabled={!input.trim() || isLoading}
                             className={`p-2.5 rounded-lg transition-all duration-300 flex items-center justify-center ${input.trim() && !isLoading
-                                ? 'bg-linear-to-br from-emerald-500 to-green-600 text-white hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:scale-105'
+                                ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:scale-105'
                                 : 'bg-white/5 text-gray-600 cursor-not-allowed border border-white/10'
                                 }`}
                         >

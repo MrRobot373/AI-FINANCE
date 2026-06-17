@@ -253,59 +253,11 @@ const AvatarPage = () => {
         }
     }, [messages]);
 
-    // Debug: Monitor isLoading state
-    // Auto-speak when AI finishes responding
     const prevIsLoading = useRef(isLoading);
 
     useEffect(() => {
-        // Check if loading just finished (went from true to false)
-        if (false && prevIsLoading.current && !isLoading) {
-            console.log("🤖 AvatarPage: AI response finished (isLoading: true -> false)");
-
-            // Get the last message
-            if (messages.length > 0) {
-                const lastMsg = messages[messages.length - 1];
-                console.log("📩 Last message role:", lastMsg.role);
-
-                // Only speak if it's the assistant's message and we haven't spoken it yet
-                if (lastMsg.role === 'assistant') {
-                    // Clean text for speech: remove code blocks, emojis, bullets, markdown, and extra spaces
-                    let cleanText = lastMsg.content.replace(/```json[\s\S]*?```/g, ''); // Remove JSON blocks
-
-                    // Remove Emojis (Range covering most common emojis)
-                    cleanText = cleanText.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1F018}-\u{1F270}\u{238C}-\u{2454}]/gu, '');
-
-                    // Remove Bullet Points and list markers (*, -, •, 1.)
-                    cleanText = cleanText.replace(/^\s*[\*\-•]\s+/gm, ''); // Remove bullet at start of line
-                    cleanText = cleanText.replace(/[\*\-•]/g, ''); // Remove inline bullets
-
-                    // Remove Markdown formatting (*bold*, _italic_, # headers)
-                    cleanText = cleanText.replace(/[\*#_`~]/g, ''); // Remove markdown chars
-
-                    // Remove Extra Spaces and Newlines
-                    cleanText = cleanText.replace(/\s+/g, ' ').trim();
-                    console.log("🗣️ Triggering speech for:", cleanText.substring(0, 50) + "...");
-
-                    if (cleanText) {
-                        if (issoundon) {
-                            setText(cleanText);
-                            setShowLatestMessage(false); // Hide message initially
-
-                            // Use timeout to ensure state updates before triggering
-                            setTimeout(() => {
-                                setSpeakTrigger(prev => prev + 1);
-                                console.log("🚀 Speak trigger incremented");
-                            }, 50);
-                        } else {
-                            setText('');
-                            setShowLatestMessage(true);
-                        }
-                    }
-                }
-            }
-        }
         prevIsLoading.current = isLoading;
-    }, [isLoading, messages, issoundon]);
+    }, [isLoading]);
 
     const playNextSpeechSegment = () => {
         if (!soundOnRef.current) return;
@@ -575,10 +527,7 @@ const AvatarPage = () => {
                                             <input
                                                 type="text"
                                                 value={input}
-                                                onChange={(e) => {
-                                                    setInput(e.target.value)
-                                                    setText(e.target.value)
-                                                }}
+                                                onChange={(e) => setInput(e.target.value)}
                                                 placeholder="Start your request, and let FinWise handle everything"
                                                 className="w-full bg-transparent border-none text-white placeholder-gray-500 py-3 focus:outline-none text-sm"
                                                 disabled={isLoading || fastRtcVoice.active}

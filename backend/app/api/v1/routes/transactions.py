@@ -5,6 +5,7 @@ from typing import List, Optional
 import uuid
 import csv
 import io
+import os
 
 from app.db.database import get_db
 from app.models.transaction import Transaction as TransactionModel

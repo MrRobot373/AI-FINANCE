@@ -56,6 +56,7 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
     const externalSourceRef = useRef(null);
     const externalAnalyserRef = useRef(null);
     const externalSamplesRef = useRef(null);
+    const externalFreqSamplesRef = useRef(null);
     const externalLevelRef = useRef(0);
     const externalActiveRef = useRef(false);
     const externalNoiseFloorRef = useRef(0.006);
@@ -141,6 +142,7 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
         externalSourceRef.current = null;
         externalAnalyserRef.current = null;
         externalSamplesRef.current = null;
+        externalFreqSamplesRef.current = null;
         externalLevelRef.current = 0;
         externalActiveRef.current = false;
         externalNoiseFloorRef.current = 0.006;
@@ -187,6 +189,7 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
         externalSourceRef.current = source;
         externalAnalyserRef.current = analyser;
         externalSamplesRef.current = new Uint8Array(analyser.fftSize);
+        externalFreqSamplesRef.current = new Uint8Array(analyser.frequencyBinCount);
         externalActiveRef.current = true;
         externalLevelRef.current = 0;
         externalNoiseFloorRef.current = 0.006;
@@ -478,18 +481,61 @@ export const useLipSync = (headMeshRef, teethMeshRef, onStart, onEnd) => {
             };
 
             ALL_SHAPE_KEYS.forEach((key) => apply(key, 0));
-            const level = externalLevelRef.current;
-            const wide = Math.min(0.35, level * 0.28);
-            const round = Math.max(0, Math.sin(now * 16) * 0.12 * level);
-            apply('Lips_Open_Wide', level * 0.95);
-            apply('TeethTongue_Open', level);
-            apply('Lips_Wide', wide);
-            apply('Lips_Round', round);
-            apply('Lips_Protude', round * 0.7);
-            apply('mouthOpen', level);
-            apply('jawOpen', level * 0.85);
-            apply('mouthFunnel', round * 0.8);
-            apply('mouthPucker', round * 0.55);
+
+            // --- Spectral (formant-band) analysis: estimate the vowel/consonant
+            // shape from the audio spectrum instead of just its loudness. ---
+            const level = externalLevelRef.current; // overall mouth openness (0..1)
+            const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+            let bright = 0.5; // 0 = rounded/dark vowel (oo/oh), 1 = wide/bright (ee/eh)
+            let sib = 0;      // sibilant / fricative presence (s, sh, f, th)
+            const freq = externalFreqSamplesRef.current;
+            const analyserNode = externalAnalyserRef.current;
+            const audioCtx = externalAudioContextRef.current;
+            if (freq && analyserNode && audioCtx) {
+                analyserNode.getByteFrequencyData(freq);
+                const binHz = audioCtx.sampleRate / analyserNode.fftSize;
+                let highE = 0;
+                let totalE = 0;
+                let centroidNum = 0;
+                let centroidDen = 0;
+                for (let i = 1; i < freq.length; i += 1) {
+                    const f = i * binHz;
+                    if (f > 8000) break; // ignore hiss above the speech band
+                    const mag = freq[i] / 255;
+                    const e = mag * mag;
+                    totalE += e;
+                    centroidNum += f * mag;
+                    centroidDen += mag;
+                    if (f >= 2000) highE += e;
+                }
+                if (totalE > 1e-5 && centroidDen > 0) {
+                    const centroid = centroidNum / centroidDen;   // spectral centroid (Hz)
+                    const highRatio = highE / totalE;             // sibilant indicator
+                    bright = clamp01((centroid - 700) / 1800);    // 700Hz→round … 2500Hz→wide
+                    sib = clamp01((highRatio - 0.42) / 0.35);
+                }
+            }
+
+            const vowel = 1 - sib;
+            const roundW = vowel * (1 - bright); // oo / oh : pucker + protrude
+            const wideW = vowel * bright;        // ee / eh : lips spread
+            const open = level;
+
+            // Model-specific shape keys (this avatar's rig)
+            apply('TeethTongue_Open', open * (vowel * 0.9 + sib * 0.15));
+            apply('Lips_Open_Wide', open * (0.35 + 0.5 * wideW + 0.15 * roundW));
+            apply('Lips_Wide', clamp01(open * (0.15 + 0.7 * wideW) + sib * 0.5));
+            apply('Lips_Round', open * 0.9 * roundW);
+            apply('Lips_Protude', open * 0.5 * roundW);
+            apply('Lips_Purse_Narrow', clamp01(sib * 0.4 + roundW * open * 0.2));
+            apply('TeethTongue_TipUp', sib * 0.6);
+            apply('Lips_Corner_Up', wideW * open * 0.25);
+            // Generic ARKit-style fallbacks (for models that use these instead)
+            apply('mouthOpen', open * vowel);
+            apply('jawOpen', open * vowel * 0.85);
+            apply('mouthFunnel', roundW * open * 0.7);
+            apply('mouthPucker', clamp01(roundW * open * 0.5 + sib * 0.1));
             return;
         }
 

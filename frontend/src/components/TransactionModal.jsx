@@ -56,9 +56,14 @@ const TransactionModal = ({ isOpen, onClose, onTransactionAdded, transactionToEd
 
     const fetchCategories = async () => {
         setLoading(true);
-        const data = await getCategories();
-        setCategories(data);
-        setLoading(false);
+        try {
+            const data = await getCategories();
+            setCategories(data);
+        } catch (error) {
+            console.error("Failed to fetch categories", error);
+        } finally {
+            setLoading(false);
+        }
     };
 
     const handleCreateCategory = async () => {

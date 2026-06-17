@@ -166,7 +166,7 @@ async def _generate_with_edge_or_gtts(text: str, voice: str) -> str:
         try:
             from gtts import gTTS
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, lambda: gTTS(text=text, lang="en").save(str(file_path)))
         except Exception as e2:
             print(f"Both fallback TTS services failed: {e2}")

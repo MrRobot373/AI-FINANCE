@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional
+import asyncio
 import json
 import uuid
 import sys
@@ -105,27 +106,26 @@ async def chat(session_id: str, request: ChatRequest, section: str = Query("rag"
     ).order_by(MessageModel.created_at.desc()).limit(10).all()
     history = history[::-1] # Reverse to chronological order
 
-    def event_generator():
+    async def event_generator():
         full_response = ""
         try:
-            # Pass section and history to AI service
             for chunk in ai_service.generate_stream(request.message, db, section, history):
                 full_response += chunk
                 payload = json.dumps({"content": chunk})
                 yield f"data: {payload}\n\n"
-            
-            # Save Assistant Message after stream completes
+                await asyncio.sleep(0)  # yield to event loop between chunks
+
             assistant_msg = MessageModel(session_id=session_id, role="assistant", content=full_response)
             db.add(assistant_msg)
             db.commit()
-            
-            # Update session timestamp
+
             session.updated_at = assistant_msg.created_at
             db.commit()
 
             yield "data: [DONE]\n\n"
         except Exception as e:
-            yield f"data: {{\"error\": \"{str(e)}\"}}\n\n"
+            error_payload = json.dumps({"error": str(e)})
+            yield f"data: {error_payload}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

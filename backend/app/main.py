@@ -1,5 +1,7 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, Request, APIRouter, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import os
 from dotenv import load_dotenv
 import yfinance as yf
@@ -10,23 +12,21 @@ from app.api.v1.routes import categories, transactions, goals, recurring, ai, tr
 from app.db.database import engine, Base
 from app.services.fastrtc_voice_service import mount_fastrtc_voice
 
-# This will create the tables in the database
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Finance AI API", version="1.0")
 
-@app.on_event("startup")
-def startup_event():
-    """Prepare runtime data on server start."""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     from app.db.database import SessionLocal
-
     db = SessionLocal()
     try:
         categories.ensure_default_categories(db)
     finally:
         db.close()
+    yield
 
-from fastapi.staticfiles import StaticFiles
+
+app = FastAPI(title="Finance AI API", version="1.0", lifespan=lifespan)
 
 # --- Middleware ---
 app.add_middleware(
@@ -80,7 +80,7 @@ def yfinance(symbol: str):
             return round((price["regularMarketPrice"] / 31.1035) * usd_inr(), 2)
         else:
             return round(price["regularMarketPrice"], 2)
-    except:
+    except Exception:
         return "Network Error"
 def usd_inr():
     ticker = yf.Ticker("USDINR=X")

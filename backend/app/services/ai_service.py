@@ -143,17 +143,15 @@ Financial goals:
 Remember: Respond as if you are speaking directly to someone. Short, natural, clear sentences only."""
         return context
 
-    def generate_stream(self, prompt: str, db: Session, section: str = "dashboard", history: list = []):
+    def generate_stream(self, prompt: str, db: Session, section: str = "dashboard", history=None):
+        if history is None:
+            history = []
         if section.lower() == "rag":
-            # Use RagService for RAG section
             from app.services.rag_service import RagService
             rag_service = RagService()
             response = rag_service.process_chat_query(prompt, history=history)
-            # Simulate streaming for the frontend
-            import time
             for word in response.split(" "):
                 yield word + " "
-                time.sleep(0.01)
             return
 
         system_context = self.build_context(db, section)

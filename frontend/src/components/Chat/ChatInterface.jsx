@@ -30,28 +30,18 @@ const ChatInterface = () => {
         scrollToBottom();
     }, [messages]);
 
-    // Set ischatting based on whether messages exist
     useEffect(() => {
-        console.log('Messages changed:', messages?.length, 'messages');
         if (messages && messages.length > 0) {
-            console.log('Setting ischatting to true');
             setIschatting(true);
         } else {
-            console.log('Setting ischatting to false');
             setIschatting(false);
         }
     }, [messages]);
 
-    // Debug: Monitor isLoading state
-    useEffect(() => {
-        console.log('isLoading changed to:', isLoading);
-    }, [isLoading]);
-
     const handleSubmit = (e) => {
         e.preventDefault();
-        setIschatting(true)
+        setIschatting(true);
         if (!input.trim() || isLoading) return;
-        console.log('Sending message:', input);
         sendMessage(input);
         setInput('');
     };

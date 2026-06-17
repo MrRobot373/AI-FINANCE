@@ -104,6 +104,7 @@ def _bob_config() -> Dict[str, object]:
             "BOB_WHISPER_NO_SPEECH_THRESHOLD",
             DEFAULT_WHISPER_NO_SPEECH_THRESHOLD,
         ),
+        "whisper_vad_filter": _env_bool("BOB_WHISPER_VAD_FILTER", True),
         "whisper_initial_prompt": _env_str(
             "BOB_WHISPER_INITIAL_PROMPT",
             DEFAULT_WHISPER_INITIAL_PROMPT,
@@ -209,6 +210,7 @@ def get_fastrtc_voice_health() -> Dict[str, object]:
             "device": runtime.device if runtime else config["whisper_device"],
             "compute_type": runtime.compute_type if runtime else config["whisper_compute_type"],
             "tts_device": runtime.tts_device if runtime else config["tts_device"],
+            "cpu_fallback": runtime.cpu_fallback if runtime else False,
         },
         "install": {
             "requirements": "backend/requirements-voice.txt",
@@ -382,9 +384,49 @@ class BobVoiceRuntime:
         self.device = str(self.config["whisper_device"])
         self.compute_type = str(self.config["whisper_compute_type"])
         self.tts_device = str(self.config["tts_device"])
+        self.effective_beam_size = int(self.config["whisper_beam_size"])
+        self.effective_best_of = int(self.config["whisper_best_of"])
+        self.cpu_fallback = False
         self._models_loaded = False
         self._warmup_thread = None
         self._load_lock = threading.RLock()
+
+    def _resolve_devices(self) -> None:
+        """Pick the real compute device. If CUDA is requested but unavailable
+        (no GPU, broken CUDA/cuDNN, wrong torch build), degrade to CPU/int8
+        with a lighter decode instead of failing the whole turn."""
+        requested_whisper = str(self.config["whisper_device"]).lower()
+        requested_tts = str(self.config["tts_device"]).lower()
+
+        cuda_ok = False
+        if "cuda" in {requested_whisper, requested_tts}:
+            try:
+                import torch
+
+                cuda_ok = bool(torch.cuda.is_available())
+            except Exception:
+                logger.warning("Could not probe torch CUDA; assuming GPU is unavailable.", exc_info=True)
+                cuda_ok = False
+
+        if requested_whisper == "cuda" and not cuda_ok:
+            logger.warning("CUDA requested for Whisper but unavailable - falling back to CPU/int8.")
+            self.device = "cpu"
+            self.compute_type = "int8"
+            self.cpu_fallback = True
+            self.effective_beam_size = 1
+            self.effective_best_of = 1
+        else:
+            self.device = requested_whisper
+            self.compute_type = str(self.config["whisper_compute_type"])
+            self.cpu_fallback = self.device == "cpu"
+            self.effective_beam_size = int(self.config["whisper_beam_size"])
+            self.effective_best_of = int(self.config["whisper_best_of"])
+
+        if requested_tts == "cuda" and not cuda_ok:
+            logger.warning("CUDA requested for Kokoro TTS but unavailable - falling back to CPU.")
+            self.tts_device = "cpu"
+        else:
+            self.tts_device = requested_tts
 
     def warmup_async(self) -> None:
         if self.warmup_started or self._models_loaded:
@@ -413,11 +455,18 @@ class BobVoiceRuntime:
             _patch_espeak_wrapper_for_kokoro()
             from kokoro import KPipeline
 
-            logger.info("Loading Bob Faster-Whisper model %s", self.config["whisper_model"])
+            self._resolve_devices()
+
+            logger.info(
+                "Loading Bob Faster-Whisper model %s on %s/%s",
+                self.config["whisper_model"],
+                self.device,
+                self.compute_type,
+            )
             self.whisper = WhisperModel(
                 str(self.config["whisper_model"]),
-                device=str(self.config["whisper_device"]),
-                compute_type=str(self.config["whisper_compute_type"]),
+                device=self.device,
+                compute_type=self.compute_type,
                 cpu_threads=int(self.config["whisper_cpu_threads"]),
                 download_root=str(self.config["whisper_download_root"]),
             )
@@ -445,14 +494,14 @@ class BobVoiceRuntime:
             segments, _info = self.whisper.transcribe(
                 str(audio_path),
                 language="en",
-                beam_size=int(self.config["whisper_beam_size"]),
-                best_of=int(self.config["whisper_best_of"]),
+                beam_size=int(self.effective_beam_size),
+                best_of=int(self.effective_best_of),
                 temperature=0.0,
                 condition_on_previous_text=False,
                 no_speech_threshold=float(self.config["whisper_no_speech_threshold"]),
                 initial_prompt=str(self.config["whisper_initial_prompt"]),
                 hotwords=str(self.config["whisper_hotwords"]),
-                vad_filter=True,
+                vad_filter=bool(self.config["whisper_vad_filter"]),
                 vad_parameters={
                     "min_silence_duration_ms": 500,
                     "speech_pad_ms": 200,
@@ -485,6 +534,32 @@ class BobVoiceRuntime:
         except Exception:
             logger.exception("Bob Ollama response failed.")
             return "I'm sorry, I had trouble processing that."
+
+    def generate_response_stream(self, user_text: str):
+        """Yield reply text incrementally so TTS can start on the first
+        sentence instead of waiting for the whole response."""
+        self.load_models()
+        try:
+            stream = self.ollama.chat(
+                model=str(self.config["llm_model"]),
+                messages=[
+                    {"role": "system", "content": str(self.config["system_prompt"])},
+                    {"role": "user", "content": user_text},
+                ],
+                options={
+                    "temperature": float(self.config["llm_temperature"]),
+                    "num_predict": int(self.config["llm_num_predict"]),
+                    "top_p": float(self.config["llm_top_p"]),
+                },
+                stream=True,
+            )
+            for part in stream:
+                chunk = (part.get("message") or {}).get("content") or ""
+                if chunk:
+                    yield chunk
+        except Exception:
+            logger.exception("Bob Ollama streaming response failed.")
+            yield "I'm sorry, I had trouble processing that."
 
     def synthesize(self, text: str, voice: Optional[str] = None):
         self.load_models()
@@ -569,9 +644,9 @@ def _create_bob_handler():
                         "voice": voice,
                     },
                 ))
-            self._clear_output()
-            if self.worker_thread and self.worker_thread.is_alive():
-                self.worker_thread.join(timeout=1)
+            # Voice/gender changes apply to the next turn. Do NOT clear the
+            # output queue or join the worker here, or an in-progress reply
+            # gets truncated whenever the frontend re-sends the voice config.
 
         def receive(self, frame: Tuple[int, object]) -> None:
             sample_rate, array = frame
@@ -652,8 +727,9 @@ def _create_bob_handler():
             self.silence_ms = 0.0
             self.speech_ms = 0.0
             self.total_ms = 0.0
-            self.noise_samples = []
-            self.threshold = float(self.runtime.config["silence_threshold"])
+            # Keep the calibrated noise floor / threshold across turns. Wiping
+            # it every turn forced a fresh calibration from the first frames of
+            # the next utterance (often speech), which made detection erratic.
 
         def _clear_output(self):
             while True:
@@ -707,16 +783,16 @@ def _create_bob_handler():
                         self._queue_tts(reply)
                         continue
 
-                    reply = self.runtime.generate_response(transcript)
-                    self.send_message_sync(create_message(
-                        "log",
-                        {
-                            "event": "assistant_reply",
-                            "role": "assistant",
-                            "text": reply,
-                        },
-                    ))
-                    self._queue_tts(reply)
+                    reply = self._stream_response_and_speak(transcript)
+                    if reply:
+                        self.send_message_sync(create_message(
+                            "log",
+                            {
+                                "event": "assistant_reply",
+                                "role": "assistant",
+                                "text": reply,
+                            },
+                        ))
                 except Exception:
                     logger.exception("Bob speech-to-speech turn failed.")
                     self.send_message_sync(create_message("error", "Bob voice pipeline failed."))
@@ -724,19 +800,80 @@ def _create_bob_handler():
                     self.responding = False
                     self.send_message_sync(create_message("end_stream", ""))
 
-        def _queue_tts(self, text: str):
+        @staticmethod
+        def _first_sentence_break(text: str, min_len: int = 10) -> int:
+            """Index of the first sentence-ending punctuation safe to flush to
+            TTS, or -1. Avoids splitting decimals (₹1.5) and abbreviations by
+            requiring whitespace/end after the punctuation."""
+            for index, char in enumerate(text):
+                if char == "\n" and index + 1 >= min_len:
+                    return index
+                if char in ".!?" and index + 1 >= min_len:
+                    nxt = text[index + 1] if index + 1 < len(text) else " "
+                    if nxt in " \n\t\r":
+                        return index
+            return -1
+
+        def _stream_response_and_speak(self, transcript: str) -> str:
+            """Stream LLM tokens, speaking each sentence as soon as it is ready
+            so the avatar starts talking ~1 sentence in, not after the full
+            reply. Returns the complete reply text for the transcript log."""
+            with self.voice_lock:
+                tts_voice = self.tts_voice
+
+            buffer = ""
+            full_text = ""
             first_chunk = True
+            max_buffer = 240  # flush long run-ons even without punctuation
+
+            try:
+                for delta in self.runtime.generate_response_stream(transcript):
+                    if self.interrupt_event.is_set() or self.stop_event.is_set():
+                        return full_text.strip()
+                    buffer += delta
+                    full_text += delta
+
+                    while True:
+                        break_at = self._first_sentence_break(buffer)
+                        if break_at == -1 and len(buffer) >= max_buffer:
+                            break_at = buffer.rfind(" ", 0, max_buffer)
+                            if break_at <= 0:
+                                break_at = max_buffer - 1
+                        if break_at == -1:
+                            break
+
+                        sentence = buffer[:break_at + 1].strip()
+                        buffer = buffer[break_at + 1:]
+                        if sentence:
+                            first_chunk = self._speak_segment(sentence, tts_voice, first_chunk)
+                            if self.interrupt_event.is_set() or self.stop_event.is_set():
+                                return full_text.strip()
+
+                tail = buffer.strip()
+                if tail and not (self.interrupt_event.is_set() or self.stop_event.is_set()):
+                    self._speak_segment(tail, tts_voice, first_chunk)
+            except Exception:
+                logger.exception("Bob streaming speech-to-speech failed.")
+                self.send_message_sync(create_message("error", "Bob voice pipeline failed."))
+
+            return full_text.strip()
+
+        def _speak_segment(self, text: str, tts_voice: str, first_chunk: bool) -> bool:
+            for audio in self.runtime.synthesize(text, voice=tts_voice):
+                if self.interrupt_event.is_set() or self.stop_event.is_set():
+                    break
+                if first_chunk:
+                    self.send_message_sync(create_message("log", "response_starting"))
+                    first_chunk = False
+                self.output_queue.put(audio)
+                time.sleep(0.005)
+            return first_chunk
+
+        def _queue_tts(self, text: str):
             with self.voice_lock:
                 tts_voice = self.tts_voice
             try:
-                for audio in self.runtime.synthesize(text, voice=tts_voice):
-                    if self.interrupt_event.is_set() or self.stop_event.is_set():
-                        break
-                    if first_chunk:
-                        self.send_message_sync(create_message("log", "response_starting"))
-                        first_chunk = False
-                    self.output_queue.put(audio)
-                    time.sleep(0.005)
+                self._speak_segment(text, tts_voice, True)
             except Exception:
                 logger.exception("Bob Kokoro TTS failed.")
                 self.send_message_sync(create_message("error", "Bob TTS failed."))

@@ -20,12 +20,12 @@ const Goals = () => {
     const [contributeModalOpen, setContributeModalOpen] = useState(false);
     const [selectedGoal, setSelectedGoal] = useState(null);
     const [contributeAmount, setContributeAmount] = useState('');
-    const [contributeCategoryId, setContributeCategoryId] = useState('c1e5e519-7107-4a6c-aa86-1bc5f1a516e4');
-    const [amountExceed, setAmountExceed] = useState(false)
-    const today = new Date().toISOString().split("T")[0]
+    const [contributeCategoryId, setContributeCategoryId] = useState('');
+    const [amountExceed, setAmountExceed] = useState(false);
+    const today = new Date().toISOString().split("T")[0];
+
     useEffect(() => {
         fetchData();
-
     }, []);
 
     const fetchData = async () => {
@@ -34,6 +34,12 @@ const Goals = () => {
             const [goalsData, categoriesData] = await Promise.all([getGoals(), getCategories()]);
             setGoals(goalsData);
             setCategories(categoriesData);
+
+            // Resolve the "Goals" category ID dynamically
+            const goalsCat = categoriesData.find(c => c.name === 'Goals');
+            const fallbackCat = categoriesData.find(c => !c.is_income);
+            const resolved = goalsCat || fallbackCat;
+            if (resolved) setContributeCategoryId(resolved.id);
         } catch (error) {
             console.error("Failed to fetch data", error);
         } finally {
@@ -43,8 +49,13 @@ const Goals = () => {
 
     const handleDelete = async (id) => {
         if (window.confirm('Are you sure you want to delete this goal?')) {
-            await deleteGoal(id);
-            fetchData();
+            try {
+                await deleteGoal(id);
+                fetchData();
+            } catch (error) {
+                console.error("Failed to delete goal:", error);
+                alert("Failed to delete goal. Please try again.");
+            }
         }
     };
 
@@ -63,12 +74,15 @@ const Goals = () => {
                 current_amount: parseFloat(currentAmount) || 0,
                 deadline: deadline ? new Date(deadline).toISOString() : null
             });
-            await createTransaction({
-                amount: -Math.abs(parseFloat(currentAmount)), // Negative for expense
-                description: `Contribution to ${name}`,
-                date: new Date().toISOString(),
-                category_id: contributeCategoryId
-            });
+            const initialAmount = parseFloat(currentAmount);
+            if (initialAmount > 0 && contributeCategoryId) {
+                await createTransaction({
+                    amount: -Math.abs(initialAmount),
+                    description: `Contribution to ${name}`,
+                    date: new Date().toISOString(),
+                    category_id: contributeCategoryId
+                });
+            }
 
             setIsModalOpen(false);
             fetchData();

@@ -206,12 +206,70 @@ class RagService:
         cleaned = re.sub(r"\b(search the web|web search|look up online|browse|internet search)\b", "", query, flags=re.I)
         return cleaned.strip(" :,-") or query
 
+    def _is_stock_followup(self, query: str, history):
+        """A short follow-up (e.g. 'what about reliance', 'and tata motors', or just
+        a company name) right after a stock/market answer should stay in stock mode."""
+        if not history:
+            return False
+        q = self._normalize_query(query)
+        looks_like_followup = (
+            bool(re.match(r"^(what|how)\s+about\b", q))
+            or bool(re.match(r"^(and|also|then)\b", q))
+            or len(q.split()) <= 3
+        )
+        if not looks_like_followup:
+            return False
+
+        stock_markers = ("market data", "yahoo finance", "stock data", "current price")
+        user_stock_words = ("price", "prize", "stock", "share", "quote")
+        for msg in reversed(list(history)[-4:]):
+            role = getattr(msg, "role", "")
+            content = (getattr(msg, "content", "") or "").lower()
+            if role == "assistant" and any(marker in content for marker in stock_markers):
+                return True
+            if role == "user" and any(word in content for word in user_stock_words):
+                return True
+        return False
+
+    def _detect_target_currency(self, query: str):
+        """Detect a target currency the user wants a price shown in."""
+        q = self._normalize_query(query)
+        mapping = {
+            "INR": ["rupee", "rupees", "inr", "rs", "₹"],
+            "USD": ["dollar", "dollars", "usd"],
+            "EUR": ["euro", "euros", "eur"],
+            "GBP": ["pound", "pounds", "gbp"],
+            "JPY": ["yen", "jpy"],
+        }
+        for currency, words in mapping.items():
+            if any(re.search(rf"\b{re.escape(w)}\b", q) for w in words):
+                return currency
+        return None
+
+    def _last_stock_symbol_from_history(self, history):
+        """Pull the ticker (e.g. NVDA, RELIANCE.NS) from the most recent market-data
+        answer, so a follow-up like 'in rupees' knows which stock we mean."""
+        if not history:
+            return None
+        for msg in reversed(list(history)):
+            if getattr(msg, "role", "") != "assistant":
+                continue
+            content = getattr(msg, "content", "") or ""
+            if not any(m in content.lower() for m in ("market data", "stock data", "yahoo finance")):
+                continue
+            match = re.search(r"\(([A-Z0-9][A-Z0-9.\-\^&]{0,14})\)", content)
+            if match:
+                return match.group(1)
+        return None
+
     def _resolve_market_symbol(self, query: str):
         q = self._normalize_query(query)
         symbols = {
+            # --- Indices ---
             "dax": ("^GDAXI", "DAX Index", "EUR"),
-            "nifty": ("^NSEI", "Nifty 50", "INR"),
+            "bank nifty": ("^NSEBANK", "Nifty Bank", "INR"),
             "nifty 50": ("^NSEI", "Nifty 50", "INR"),
+            "nifty": ("^NSEI", "Nifty 50", "INR"),
             "sensex": ("^BSESN", "BSE Sensex", "INR"),
             "nasdaq": ("^IXIC", "NASDAQ Composite", "USD"),
             "s&p 500": ("^GSPC", "S&P 500", "USD"),
@@ -219,25 +277,162 @@ class RagService:
             "dow jones": ("^DJI", "Dow Jones Industrial Average", "USD"),
             "ftse": ("^FTSE", "FTSE 100", "GBP"),
             "nikkei": ("^N225", "Nikkei 225", "JPY"),
+            # --- US / global stocks ---
             "apple": ("AAPL", "Apple", "USD"),
             "microsoft": ("MSFT", "Microsoft", "USD"),
             "nvidia": ("NVDA", "NVIDIA", "USD"),
             "tesla": ("TSLA", "Tesla", "USD"),
-            "google": ("GOOGL", "Alphabet", "USD"),
             "alphabet": ("GOOGL", "Alphabet", "USD"),
+            "google": ("GOOGL", "Alphabet", "USD"),
             "amazon": ("AMZN", "Amazon", "USD"),
             "meta": ("META", "Meta", "USD"),
+            "netflix": ("NFLX", "Netflix", "USD"),
+            "amd": ("AMD", "AMD", "USD"),
+            "intel": ("INTC", "Intel", "USD"),
+            # --- Indian (NSE) stocks: use the .NS suffix so Yahoo Finance returns
+            #     accurate live prices, exactly like the US tickers above. ---
+            "reliance industries": ("RELIANCE.NS", "Reliance Industries", "INR"),
+            "reliance": ("RELIANCE.NS", "Reliance Industries", "INR"),
+            "tata consultancy": ("TCS.NS", "Tata Consultancy Services", "INR"),
+            "tcs": ("TCS.NS", "Tata Consultancy Services", "INR"),
+            "infosys": ("INFY.NS", "Infosys", "INR"),
+            "hdfc bank": ("HDFCBANK.NS", "HDFC Bank", "INR"),
+            "hdfc": ("HDFCBANK.NS", "HDFC Bank", "INR"),
+            "icici bank": ("ICICIBANK.NS", "ICICI Bank", "INR"),
+            "icici": ("ICICIBANK.NS", "ICICI Bank", "INR"),
+            "state bank": ("SBIN.NS", "State Bank of India", "INR"),
+            "sbi": ("SBIN.NS", "State Bank of India", "INR"),
+            "wipro": ("WIPRO.NS", "Wipro", "INR"),
+            "itc": ("ITC.NS", "ITC", "INR"),
+            "bajaj finance": ("BAJFINANCE.NS", "Bajaj Finance", "INR"),
+            "bajaj finserv": ("BAJAJFINSV.NS", "Bajaj Finserv", "INR"),
+            "bharti airtel": ("BHARTIARTL.NS", "Bharti Airtel", "INR"),
+            "airtel": ("BHARTIARTL.NS", "Bharti Airtel", "INR"),
+            "larsen": ("LT.NS", "Larsen & Toubro", "INR"),
+            "l&t": ("LT.NS", "Larsen & Toubro", "INR"),
+            "maruti": ("MARUTI.NS", "Maruti Suzuki", "INR"),
+            "axis bank": ("AXISBANK.NS", "Axis Bank", "INR"),
+            "kotak bank": ("KOTAKBANK.NS", "Kotak Mahindra Bank", "INR"),
+            "kotak": ("KOTAKBANK.NS", "Kotak Mahindra Bank", "INR"),
+            "hcl tech": ("HCLTECH.NS", "HCL Technologies", "INR"),
+            "hcl": ("HCLTECH.NS", "HCL Technologies", "INR"),
+            "tata motors": ("TATAMOTORS.NS", "Tata Motors", "INR"),
+            "tata steel": ("TATASTEEL.NS", "Tata Steel", "INR"),
+            "tata power": ("TATAPOWER.NS", "Tata Power", "INR"),
+            "sun pharma": ("SUNPHARMA.NS", "Sun Pharma", "INR"),
+            "adani enterprises": ("ADANIENT.NS", "Adani Enterprises", "INR"),
+            "adani ports": ("ADANIPORTS.NS", "Adani Ports", "INR"),
+            "ongc": ("ONGC.NS", "ONGC", "INR"),
+            "ntpc": ("NTPC.NS", "NTPC", "INR"),
+            "power grid": ("POWERGRID.NS", "Power Grid", "INR"),
+            "titan": ("TITAN.NS", "Titan", "INR"),
+            "nestle india": ("NESTLEIND.NS", "Nestle India", "INR"),
+            "asian paints": ("ASIANPAINT.NS", "Asian Paints", "INR"),
+            "ultratech": ("ULTRACEMCO.NS", "UltraTech Cement", "INR"),
+            "jsw steel": ("JSWSTEEL.NS", "JSW Steel", "INR"),
+            "coal india": ("COALINDIA.NS", "Coal India", "INR"),
+            "paytm": ("PAYTM.NS", "Paytm", "INR"),
+            "zomato": ("ZOMATO.NS", "Zomato", "INR"),
         }
-        for key, value in symbols.items():
+        # Match longer keys first so "hdfc bank" wins over "hdfc", etc.
+        for key in sorted(symbols, key=len, reverse=True):
             if re.search(rf"\b{re.escape(key)}\b", q):
-                return value
+                return symbols[key]
         return None
+
+    _COMPANY_QUERY_STOPWORDS = {
+        "what", "whats", "what's", "about", "is", "the", "of", "how", "much",
+        "tell", "me", "give", "and", "also", "then", "price", "prize", "stock",
+        "stocks", "share", "shares", "quote", "current", "today", "todays",
+        "today's", "value", "rate", "market", "live", "for", "show", "get",
+        "a", "an", "to", "in", "on", "do", "does", "doing", "right", "now",
+    }
+
+    def _clean_company_query(self, query: str):
+        """Strip finance filler words so a name like 'what is the share price of
+        adani green today' becomes 'adani green' for symbol search."""
+        q = self._normalize_query(query)
+        q = re.sub(r"[^a-z0-9&.\s]", " ", q)
+        tokens = [t for t in q.split() if t and t not in self._COMPANY_QUERY_STOPWORDS]
+        cleaned = " ".join(tokens).strip()
+        return cleaned or q.strip()
+
+    def _yahoo_symbol_search(self, query: str):
+        """Resolve a company/index name to its real ticker via Yahoo Finance's
+        symbol search. Authoritative (no LLM guessing, no hardcoded list) and
+        covers essentially every listed company. India-focused: prefers NSE
+        (.NS) then BSE (.BO) listings, else the top-ranked match."""
+        term = self._clean_company_query(query)
+        if not term or len(term) < 2:
+            return None
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                              "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+            }
+            resp = requests.get(
+                "https://query2.finance.yahoo.com/v1/finance/search",
+                params={"q": term, "quotesCount": 8, "newsCount": 0, "listsCount": 0},
+                headers=headers,
+                timeout=8,
+            )
+            if resp.status_code != 200:
+                return None
+            quotes = (resp.json() or {}).get("quotes", []) or []
+        except Exception:
+            logger.warning("Yahoo symbol search failed for %r", query, exc_info=True)
+            return None
+
+        wanted_types = {"EQUITY", "INDEX", "ETF", "MUTUALFUND", "CRYPTOCURRENCY", "CURRENCY"}
+        candidates = [q for q in quotes if q.get("symbol") and q.get("quoteType") in wanted_types]
+        if not candidates:
+            return None
+
+        def priority(item):
+            sym = item.get("symbol", "")
+            if sym.endswith(".NS"):
+                return 0  # NSE (India) primary
+            if sym.endswith(".BO"):
+                return 1  # BSE (India)
+            if "." not in sym:
+                return 2  # plain US/global primary ticker (NVDA, AAPL, PLTR)
+            return 3      # obscure foreign cross-listings (.SA, .DE, .MX, ...) last
+
+        best = min(candidates, key=priority)
+        symbol = best["symbol"]
+        name = best.get("shortname") or best.get("longname") or symbol
+        return (symbol, name, None)
 
     def _currency_prefix(self, currency: str):
         symbols = {"USD": "$", "INR": "Rs.", "EUR": "EUR ", "GBP": "GBP ", "JPY": "JPY "}
         return symbols.get((currency or "").upper(), f"{currency} " if currency else "")
 
-    def _market_data_response(self, symbol: str, display_name: str = None, currency_hint: str = None):
+    def _fx_rate(self, base: str, quote: str):
+        """Live exchange rate for 1 base -> quote via Yahoo (e.g. USDINR=X)."""
+        base = (base or "").upper()
+        quote = (quote or "").upper()
+        if not base or not quote:
+            return None
+        if base == quote:
+            return 1.0
+        pair = yf.Ticker(f"{base}{quote}=X")
+        try:
+            rate = getattr(pair.fast_info, 'last_price', None)
+            if rate:
+                return float(rate)
+        except Exception:
+            pass
+        try:
+            hist = pair.history(period="5d")
+            if not hist.empty:
+                return float(hist["Close"].iloc[-1])
+        except Exception:
+            pass
+        return None
+
+    def _market_data_response(self, symbol: str, display_name: str = None, currency_hint: str = None,
+                              target_currency: str = None):
         stock = yf.Ticker(symbol)
         current_price = None
         prev_close = None
@@ -245,9 +440,9 @@ class RagService:
 
         try:
             fast_info = stock.fast_info
-            current_price = fast_info.get("last_price")
-            prev_close = fast_info.get("previous_close")
-            currency = fast_info.get("currency") or currency
+            current_price = getattr(fast_info, 'last_price', None)
+            prev_close = getattr(fast_info, 'previous_close', None)
+            currency = getattr(fast_info, 'currency', None) or currency
         except Exception:
             pass
 
@@ -271,6 +466,21 @@ class RagService:
         except Exception:
             display_name = display_name or symbol
 
+        # Optional currency conversion (e.g. show a USD stock "in indian rupees").
+        conversion_note = ""
+        if target_currency and currency and target_currency.upper() != (currency or "").upper():
+            rate = self._fx_rate(currency, target_currency)
+            if rate:
+                current_price *= rate
+                if prev_close:
+                    prev_close *= rate
+                conversion_note = (
+                    f"\n*Converted from {currency.upper()} at 1 {currency.upper()} = "
+                    f"{rate:,.4f} {target_currency.upper()}.*"
+                )
+                currency = target_currency.upper()
+            # If the rate lookup fails, fall back to the native currency silently.
+
         change_line = ""
         if prev_close:
             change = current_price - prev_close
@@ -288,6 +498,7 @@ class RagService:
             f"{prev_close_line}\n"
             f"**As of:** {self._format_now()}\n\n"
             "*(Data retrieved from Yahoo Finance)*"
+            f"{conversion_note}"
         ).strip()
 
     # --- TOOLS ---
@@ -311,8 +522,9 @@ class RagService:
         result = self.llm.invoke(prompt).strip()
         return result
 
-    def yfinance_tool(self, query):
+    def yfinance_tool(self, query, allow_web_fallback=True):
         try:
+            # 1. Fast path: hardcoded map of common names (instant, exact ticker).
             resolved_symbol = self._resolve_market_symbol(query)
             if resolved_symbol:
                 symbol, display_name, currency = resolved_symbol
@@ -320,7 +532,21 @@ class RagService:
                 if market_data:
                     return market_data
 
-            # Step 1: Use AI to classify the query and extract tickers
+            # 2. General resolver: Yahoo Finance symbol search (authoritative ticker
+            #    lookup for ANY company, no LLM guessing, no hardcoded list).
+            searched = self._yahoo_symbol_search(query)
+            if searched:
+                symbol, display_name, currency = searched
+                market_data = self._market_data_response(symbol, display_name, currency)
+                if market_data:
+                    return market_data
+
+            # For a soft catch-all (no explicit stock keyword in the query), stop
+            # here rather than fall into less reliable LLM guessing / scraping.
+            if not allow_web_fallback:
+                return ""
+
+            # 3. Last resort for explicit stock queries: AI ticker extraction.
             prompt = f"""Analyze this stock query and respond with EXACTLY one of these formats:
 - If it's about an INDIAN company, respond: INDIAN:<NSE_TICKER>
   Common examples: Tata Motors=TATAMOTORS, Reliance Industries=RELIANCE, Infosys=INFY, TCS=TCS, HDFC Bank=HDFCBANK, SBI=SBIN, Wipro=WIPRO, Bajaj Finance=BAJFINANCE, ITC=ITC, Zomato=ZOMATO, ICICI Bank=ICICIBANK, Kotak Bank=KOTAKBANK, Maruti=MARUTI, L&T=LT, Axis Bank=AXISBANK, HCL Tech=HCLTECH
@@ -348,14 +574,24 @@ Answer:"""
                 nse_ticker = ''.join(c for c in nse_ticker if c.isalnum() or c == '&')
                 if not nse_ticker:
                     nse_ticker = query.strip().upper()
-                
-                # Try NSE first, then BSE, then web search
+
+                # Try Yahoo Finance first (reliable): NSE (.NS) then BSE (.BO).
+                for suffix in (".NS", ".BO"):
+                    market_data = self._market_data_response(f"{nse_ticker}{suffix}", currency_hint="INR")
+                    if market_data:
+                        return market_data
+
+                # Then Google Finance scraping as a secondary source.
                 for exchange in ["NSE", "BOM"]:
                     result = self._google_finance_price(nse_ticker, exchange, "Rs.")
                     if "Could not" not in result:
                         return result
-                
-                # Last resort: web search
+
+                # Last resort: a price-focused web search (only when explicitly a
+                # stock query; for a soft catch-all we return "" so the caller can
+                # fall through gracefully instead of surfacing a weak answer).
+                if not allow_web_fallback:
+                    return ""
                 try:
                     search_data = self.search_tool.run(f"{nse_ticker} current stock share price today NSE BSE INR")
                     context = search_data if search_data else "No results found."
@@ -366,7 +602,7 @@ Response:"""
                     result = self.llm.invoke(prompt).strip()
                     return result + "\n\n*(Data retrieved via Web Search)*"
                 except Exception:
-                    return f"Could not fetch stock data for {nse_ticker} at this time."
+                    return ""
 
             # Step 2b: US/global stock -> Use yfinance
             raw_ticker = ai_response.replace("US:", "").strip()
@@ -380,8 +616,8 @@ Response:"""
             current_price = None
             prev_close = None
             try:
-                current_price = stock.fast_info.get('last_price')
-                prev_close = stock.fast_info.get('previous_close')
+                current_price = getattr(stock.fast_info, 'last_price', None)
+                prev_close = getattr(stock.fast_info, 'previous_close', None)
             except Exception:
                 pass
 
@@ -397,8 +633,10 @@ Response:"""
                     pass
 
             if current_price is None:
-                # Last resort: try Google Finance scraping
-                return self._google_finance_price(ticker, "NASDAQ", "$")
+                # Last resort: try Google Finance scraping; return "" if that fails
+                # too, so the caller can fall through cleanly.
+                gf = self._google_finance_price(ticker, "NASDAQ", "$")
+                return gf if "Could not" not in gf else ""
 
             if prev_close:
                 change = current_price - prev_close
@@ -492,9 +730,27 @@ Response:"""
             except Exception:
                 return f"Could not fetch stock data for {ticker} at this time."
 
+    def _sanitize_web_answer(self, text: str):
+        """Clean LLM web answers so they render properly: collapse markdown links
+        like [label](url) to their label, drop raw URLs, and tidy leftovers."""
+        if not text:
+            return text
+        # [label](url) -> label  (fixes the doubled ([url](url)) rendering)
+        text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+        # Remove any remaining bare URLs, stopping at whitespace or closing
+        # brackets so we don't swallow trailing punctuation like ')'.
+        text = re.sub(r"https?://[^\s)\]]+", "", text)
+        # Tidy empty brackets/parens and stray whitespace left behind.
+        text = re.sub(r"\(\s*\)", "", text)
+        text = re.sub(r"\[\s*\]", "", text)
+        text = re.sub(r"[ \t]{2,}", " ", text)
+        text = re.sub(r"\s+([.,;:])", r"\1", text)
+        text = re.sub(r"\(\s*(?=[,.])", "", text)  # leftover "( ," style fragments
+        return text.strip()
+
     def web_search_full(self, query):
         context = None
-        
+
         # Try web search with retry
         for attempt in range(2):
             try:
@@ -505,12 +761,13 @@ Response:"""
             except Exception as e:
                 logger.warning(f"[SEARCH] Web search attempt {attempt+1} failed: {str(e)}")
                 continue
-        
+
         if context:
             # We got search results - summarize them
             prompt = f"""Current date and time: {self._format_now()}.
 Based on the following search results, provide a direct, concise answer to the question.
 Be brief and to the point. Only include the most relevant information.
+Write in plain prose only: do NOT include URLs, links, or markdown formatting.
 
 Search Results:
 {context}
@@ -519,18 +776,19 @@ Question: {query}
 
 Provide a concise, direct answer (2-3 sentences max) without mentioning sources:"""
             result = self.llm.invoke(prompt).strip()
-            return result
+            return self._sanitize_web_answer(result)
         else:
             # No search results available - use LLM's own knowledge
             prompt = f"""Current date and time: {self._format_now()}.
 Answer the following question using your own knowledge. Be helpful and concise.
+Write in plain prose only: do NOT include URLs, links, or markdown formatting.
 If you genuinely don't know the answer, say so honestly and suggest how the user could find the information.
 
 Question: {query}
 
 Answer (2-3 sentences):"""
             result = self.llm.invoke(prompt).strip()
-            return result
+            return self._sanitize_web_answer(result)
 
     # --- ROUTING ENGINE ---
 
@@ -560,9 +818,34 @@ Answer (2-3 sentences):"""
             context = self.retrieve_context(query)
             return self.finance_advisor_tool(query, context)
             
+        # 1c. Currency-conversion intent for a stock, e.g. "nvidia price in inr" or a
+        # follow-up "in indian rupees" after a stock answer. Resolve the subject from
+        # the current query, else from the previous market-data turn, then convert.
+        target_currency = self._detect_target_currency(query)
+        if target_currency:
+            named = self._resolve_market_symbol(query)
+            conv_symbol = named[0] if named else None
+            conv_name = named[1] if named else None
+            if not conv_symbol and len(self._normalize_query(query).split()) <= 4:
+                conv_symbol = self._last_stock_symbol_from_history(history)
+            if conv_symbol:
+                converted = self._market_data_response(
+                    conv_symbol, conv_name, target_currency=target_currency
+                )
+                if converted:
+                    return converted
+
         # 2. Check if it's a real-time stock price question -> Use yfinance
         stock_keywords = ['price', 'prize', 'stock', 'share', 'quote', 'how much is']
-        if any(keyword in query.lower() for keyword in stock_keywords):
+        is_stock_query = any(keyword in query.lower() for keyword in stock_keywords)
+        # Also treat a recognized company/index name as a stock query even without a
+        # price keyword (e.g. "reliance", "what about tcs"), and keep short follow-ups
+        # after a stock answer in stock mode.
+        if not is_stock_query and self._resolve_market_symbol(query):
+            is_stock_query = True
+        if not is_stock_query and self._is_stock_followup(query, history):
+            is_stock_query = True
+        if is_stock_query:
             yfinance_res = self.yfinance_tool(query)
             if yfinance_res:
                 return yfinance_res
@@ -572,9 +855,18 @@ Answer (2-3 sentences):"""
         if context:
             prompt = f"Answer the question using ONLY the provided context. If the answer cannot be found in the context, respond with '__NOT_FOUND__'.\n\nContext:\n{context}\n\nQuestion: {query}\n\nAnswer:"
             doc_answer = self.llm.invoke(prompt).strip()
-            
+
             if "__NOT_FOUND__" not in doc_answer:
                 return doc_answer
+
+        # 3b. Robust catch-all: not in the knowledge base and not caught by the
+        # keyword/symbol checks above. Let the LLM ticker extractor decide if this
+        # is actually a market query (covers ANY company, not just the listed ones).
+        # It returns "" for non-stock queries, so we fall through harmlessly.
+        if not is_stock_query:
+            yfinance_res = self.yfinance_tool(query, allow_web_fallback=False)
+            if yfinance_res:
+                return yfinance_res
 
         # 4. Web search only when explicitly requested or confirmed after permission prompt.
         if self._is_explicit_web_search(query):
